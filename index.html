@@ -72,6 +72,11 @@
       <label class="inline"><input type="checkbox" name="active" checked> 使用中（オフで一覧から除外）</label>
     </div>
     <label>メモ（保険・登録費用など） <textarea name="note" rows="3"></textarea></label>
+    <section id="vehHist" hidden style="margin-top:18px">
+      <h3>貸出履歴</h3>
+      <div id="vehHistSum" class="hint" style="margin-bottom:6px"></div>
+      <ul class="list" id="vehHistList"></ul>
+    </section>
     <div class="dlg-actions">
       <button type="button" class="btn danger" id="vehDelete">削除</button>
       <span class="spacer"></span>

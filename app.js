@@ -418,12 +418,13 @@ function master() {
   const rows = db.vehicles.map((v) => `<tr class="click" data-vedit="${esc(v.id)}">
     <td data-label="ID">${esc(v.id)}</td><td data-label="車名"><b>${esc(v.name)}</b></td><td data-label="ナンバー">${esc(v.plate)}</td><td data-label="登録区分">${catBadge(v.category)}</td>
     <td data-label="車検期限">${v.inspection ? `<span class="${new Date(v.inspection + 'T23:59:59') < Date.now() ? 'red' : ''}">${v.inspection}</span>` : ''}</td>
+    <td data-label="履歴">${loansOf(v.id).filter((l) => l.type === 'loan').length}件</td>
     <td data-label="状態">${v.active === false ? '<span class="muted">停止</span>' : '使用中'}</td><td data-label="メモ" class="muted">${esc(v.note)}</td></tr>`).join('');
   return `
   <div class="toolbar"><h2 style="margin:0">車両マスタ</h2><span class="muted">${db.vehicles.length}台（上限30台）</span><span class="spacer"></span>
     <button class="btn primary" id="vNew">＋ 車両を追加</button></div>
   <div class="card scroll cardwrap" style="padding:6px 10px;margin-bottom:18px"><table class="stack">
-    <thead><tr><th>ID</th><th>車名</th><th>ナンバー</th><th>登録区分</th><th>車検期限</th><th>状態</th><th>メモ</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <thead><tr><th>ID</th><th>車名</th><th>ナンバー</th><th>登録区分</th><th>車検期限</th><th>履歴</th><th>状態</th><th>メモ</th></tr></thead><tbody>${rows}</tbody></table></div>
   <div class="cols">
     <div class="card"><h3>設定</h3><div class="grid2">
       <label>準備時間（返却後に空ける時間）<input type="number" min="0" step="0.5" id="setPrep" value="${db.settings.prepHours}"></label>
@@ -524,8 +525,30 @@ function openVeh(id) {
   $('#vehDelete').hidden = !editingVeh;
   f.id.value = v.id; f.name.value = v.name; f.plate.value = v.plate; f.category.value = v.category;
   f.inspection.value = v.inspection; f.active.checked = v.active !== false; f.note.value = v.note;
+  renderVehHistory();
   vehDlg.showModal();
 }
+function renderVehHistory() {
+  const sec = $('#vehHist');
+  sec.hidden = !editingVeh;
+  if (!editingVeh) return;
+  const all = db.loans.filter((l) => l.vehicleId === editingVeh.id).sort((a, b) => b.start.localeCompare(a.start));
+  const valid = all.filter((l) => !l.cancelled && l.type === 'loan');
+  const now = Date.now();
+  const days = valid.reduce((sum, l) => sum + (Math.min(span(l)[1], now) - Math.min(span(l)[0], now)) / DAY, 0);
+  $('#vehHistSum').textContent = all.length
+    ? `貸出 ${valid.length}件 ／ 累計 ${days.toFixed(1)}日 ／ 最終 ${fmt(valid[0]?.start || all[0].start)}`
+    : 'まだ履歴はありません';
+  $('#vehHistList').innerHTML = all.map((l) => {
+    const st = status(l);
+    const t = l.type === 'loan' ? esc(l.customer || '（名前なし）') : st;
+    return `<li class="click" data-hist="${l.id}" tabindex="0">${badge(st)}<span class="grow"><b>${t}</b> <span class="muted">${esc(l.staff)}</span></span><span class="muted" style="white-space:normal;text-align:right">${fmt(l.start)} → ${l.end && !l.undecided ? fmt(l.end) : '未定'}</span></li>`;
+  }).join('') || '<li class="empty-note">なし</li>';
+}
+$('#vehHistList').addEventListener('click', (e) => {
+  const li = e.target.closest('[data-hist]'); if (!li) return;
+  vehDlg.close(); openLoan(li.dataset.hist);
+});
 $('#vehCancel').onclick = () => vehDlg.close();
 $('#vehDelete').onclick = async () => {
   if (loansOf(editingVeh.id).length) return notify('この車には貸出履歴があるため削除できません。「使用中」のチェックを外してください。');

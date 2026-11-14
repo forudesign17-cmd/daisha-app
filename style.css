@@ -112,6 +112,7 @@ ul.list li{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:
 ul.list li:last-child{border:0}
 ul.list li.click{cursor:pointer}
 ul.list .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#vehHistList{max-height:240px;overflow:auto}
 .empty-note{color:var(--sub);padding:8px 0}
 
 /* ---- ダイアログ ---- */
