@@ -290,6 +290,7 @@ function dayView() {
     <button class="btn" data-today>今日</button>
     <b>${d.getMonth() + 1}月${d.getDate()}日（${WD[d.getDay()]}）</b>
     <span class="hint">空きをドラッグで予約 ／ 棒をドラッグで移動・端で時間変更</span>
+    <span class="hint touch-hint">棒や空きを長押ししてから動かすと、移動・予約作成ができます</span>
     <span class="spacer"></span>${catChips()}
   </div>`;
   return bar + boardHtml({ rs, re, n, m: n * 2, minTrack: n * 64, scale, shades: '' });
@@ -354,7 +355,7 @@ function exitTv() {
 }
 
 // ---------- ドラッグ操作（作成・移動・時間変更） ----------
-let dragging = false, suppressClick = false;
+let dragging = false, suppressClick = false, touchDrag = false;
 const snapMs = () => (ui.view === 'day' ? 15 * 60e3 : HOUR);
 const snapT = (t) => Math.round(t / snapMs()) * snapMs();
 function timeAt(track, x) {
@@ -383,8 +384,12 @@ function initDrag() {
     const bar = e.target.closest && e.target.closest('.bar');
     if (bar && bar.dataset.id && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openLoan(bar.dataset.id); }
   });
+  // タッチ中、ドラッグが始まったらスクロールを止める
+  bd.addEventListener('touchmove', (e) => { if (touchDrag && e.cancelable) e.preventDefault(); }, { passive: false });
+  bd.addEventListener('contextmenu', (e) => { if (e.target.closest('.bar')) e.preventDefault(); });
   bd.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'touch' || e.button !== 0) return; // タッチはスクロール優先（タップで編集）
+    const touch = e.pointerType === 'touch';
+    if (!touch && e.button !== 0) return;
     const track = e.target.closest('.track'); if (!track) return;
     const bar = e.target.closest('.bar');
     let mode = 'create', loan = null, orig = null;
@@ -395,19 +400,50 @@ function initDrag() {
       const [s, en] = span(loan);
       orig = { s, e: en, hasEnd: !(loan.undecided || !loan.end) };
     }
-    const rect = track.getBoundingClientRect();
-    const rs = Number(bd.dataset.rs), re = Number(bd.dataset.re), msPerPx = (re - rs) / rect.width;
-    const sx = e.clientX, sy = e.clientY, anchor = snapT(timeAt(track, e.clientX));
-    let moved = false, ghost = null, result = null, curTrack = track;
+    const rs = Number(bd.dataset.rs), re = Number(bd.dataset.re);
+    let sx = e.clientX, sy = e.clientY, lastEv = e;
+    let anchor = snapT(timeAt(track, sx)), grab = timeAt(track, sx);
+    let moved = false, ghost = null, result = null, curTrack = track, armed = !touch, holdTimer = null, edgeTimer = null;
+
+    const begin = () => {
+      moved = true; dragging = true; document.body.classList.add('dragging');
+      if (bar) bar.classList.add('drag');
+      else { ghost = document.createElement('div'); ghost.className = 'bar ghost'; track.appendChild(ghost); }
+      edgeTimer = setInterval(() => { // 端に近づいたらボードを自動スクロール
+        const r = bd.getBoundingClientRect(), vw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--vw')) || 0;
+        const x = lastEv.clientX;
+        if (x < r.left + vw + 28) bd.scrollLeft -= 14; else if (x > r.right - 28) bd.scrollLeft += 14; else return;
+        onMove(lastEv);
+      }, 30);
+    };
+    const finish = () => {
+      clearTimeout(holdTimer); clearInterval(edgeTimer); touchDrag = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+    if (touch) {
+      // タッチは長押しでドラッグ開始（それまではスクロール／タップ）
+      holdTimer = setTimeout(() => {
+        armed = true; touchDrag = true;
+        sx = lastEv.clientX; sy = lastEv.clientY; anchor = snapT(timeAt(track, sx)); grab = timeAt(track, sx);
+        try { e.target.releasePointerCapture(e.pointerId); } catch (err) { /* 無視 */ }
+        if (navigator.vibrate) navigator.vibrate(12);
+        begin();
+      }, 380);
+    }
 
     const onMove = (ev) => {
+      lastEv = ev;
+      if (!armed) { // 長押し待ちの間に指が動いたらスクロールとみなして中止
+        if (Math.abs(ev.clientX - sx) > 8 || Math.abs(ev.clientY - sy) > 8) { finish(); }
+        return;
+      }
       if (!moved) {
         if (Math.abs(ev.clientX - sx) < 4 && (mode === 'create' || Math.abs(ev.clientY - sy) < 6)) return;
-        moved = true; dragging = true; document.body.classList.add('dragging');
-        if (bar) bar.classList.add('drag');
-        else { ghost = document.createElement('div'); ghost.className = 'bar ghost'; track.appendChild(ghost); }
+        begin();
       }
-      const dt = (ev.clientX - sx) * msPerPx;
+      const dt = timeAt(track, ev.clientX) - grab;
       if (mode === 'create') {
         let a = anchor, b = snapT(timeAt(track, ev.clientX));
         if (a > b) [a, b] = [b, a];
@@ -427,13 +463,12 @@ function initDrag() {
       }
     };
     const onUp = async () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
+      finish();
       document.body.classList.remove('dragging');
       if (!moved) return;
       suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
       if (ghost) ghost.remove();
+      if (!result) { if (bar) bar.classList.remove('drag'); dragging = false; return; } // 長押しだけで動かさなかった場合
       if (mode === 'create') {
         dragging = false;
         openLoan(null, { vehicleId: track.dataset.v, start: toInput(new Date(result.s)), end: toInput(new Date(result.e)) });
