@@ -35,10 +35,17 @@ function load() {
 function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* 保存不可の環境ではメモリのみ */ } }
 
 // alert/confirm の代わり（アーティファクトのビューアでは使えないため）
-function notify(msg) {
+function notify(msg, undo) {
   const t = document.getElementById('toast');
-  t.textContent = msg; t.hidden = false;
-  clearTimeout(notify.t); notify.t = setTimeout(() => { t.hidden = true; }, 3500);
+  t.textContent = msg + ' ';
+  if (undo) {
+    const b = document.createElement('button');
+    b.className = 'toast-btn'; b.textContent = '元に戻す';
+    b.onclick = () => { undo(); t.hidden = true; };
+    t.appendChild(b);
+  }
+  t.hidden = false;
+  clearTimeout(notify.t); notify.t = setTimeout(() => { t.hidden = true; }, undo ? 8000 : 3500);
 }
 function ask(msg) {
   return new Promise((res) => {
@@ -124,15 +131,30 @@ function catChips() {
 }
 
 function render() {
-  if (location.hash.slice(1) !== ui.view) history.replaceState(null, '', '#' + ui.view);
+  const h = ui.tv ? 'tv' : ui.view;
+  if (location.hash.slice(1) !== h) history.replaceState(null, '', '#' + h);
+  document.body.classList.toggle('tv', !!ui.tv);
   document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.view === ui.view));
   const t = new Date(); $('#today').textContent = `${t.getMonth() + 1}月${t.getDate()}日（${WD[t.getDay()]}）`;
   const fn = { dashboard, day: dayView, period: periodView, ledger, search: searchView, master }[ui.view];
   const sx = window.scrollX, sy = window.scrollY;
+  const old = $('.board'), sl = old ? old.scrollLeft : 0, st = old ? old.scrollTop : 0;
   main.innerHTML = fn();
   window.scrollTo(sx, sy);
+  const bd = $('.board');
+  if (bd) {
+    if (ui.center && ui.view === 'day') centerNow(bd);
+    else { bd.scrollLeft = sl; bd.scrollTop = st; }
+    ui.center = false;
+  }
   const after = { day: bindBoard, period: bindBoard, ledger: bindLedger, search: bindSearch, master: bindMaster, dashboard: bindLedger }[ui.view];
   if (after) after();
+}
+function centerNow(bd) {
+  const nl = bd.querySelector('.nowline');
+  if (!nl) return;
+  const r = nl.getBoundingClientRect(), b = bd.getBoundingClientRect();
+  bd.scrollLeft = Math.max(0, r.left - b.left + bd.scrollLeft - bd.clientWidth / 2);
 }
 
 // ---------- ダッシュボード ----------
@@ -179,129 +201,264 @@ function dashboard() {
 function legend() {
   return `<div class="legend">${['貸出中', '予約', '遅延', '返却済', '返却未定', '社用', '使用不可'].map((s) => `<span class="badge s-${SCLS[s]}">${SCODE[s]} ${s}</span>`).join('')}<span class="badge s-prep">準 準備時間</span></div>`;
 }
-function vehCell(v) {
-  return `<td class="veh" data-vedit="${esc(v.id)}"><div class="nm">${catBadge(v.category)} ${esc(v.name)}</div><div class="pl">${esc(v.plate)}</div></td>`;
-}
-// [t0,t1) に重なるもの → {l, kind}
-function slotInfo(v, t0, t1) {
-  for (const l of loansOf(v.id)) {
-    const [s, e] = span(l);
-    if (s < t1 && t0 < e) return { l, kind: 'main' };
-  }
-  for (const l of loansOf(v.id)) {
-    const o = occ(l);
-    if (o[0] < t1 && t0 < o[1]) return { l, kind: 'prep' };
-  }
-  return null;
+function vehDiv(v) {
+  return `<div class="veh" data-vedit="${esc(v.id)}"><div class="nm">${catBadge(v.category)} ${esc(v.name)}</div><div class="pl">${esc(v.plate)}</div></div>`;
 }
 
-// ---------- ボード共通（連続する占有を1本の棒にして描画） ----------
-function barHtml(info, n, rs, re) {
-  const l = info.l;
-  if (info.kind === 'prep') return '<div class="bar s-prep" title="準備時間">準備</div>';
-  const st = status(l), [s, e] = span(l);
-  const cls = `bar s-${SCLS[st]}${s < rs ? ' cl' : ''}${e > re ? ' cr' : ''}`;
-  const who = l.type === 'loan' ? (l.customer || '') : st;
-  const tip = `${st} ${l.customer || ''}\n${fmt(l.start)} → ${l.end && !l.undecided ? fmt(l.end) : '未定'}`;
-  const label = n >= 2 ? `<b>${SCODE[st]}</b><span class="t">${esc(who)}</span>` : `<b>${SCODE[st]}</b>`;
-  return `<div class="${cls}" title="${esc(tip)}">${label}</div>`;
+// ---------- ボード（分単位の棒・現在時刻ライン） ----------
+const pct = (t, rs, re) => ((t - rs) / (re - rs)) * 100;
+function barPos(s, e, rs, re) {
+  const cs = Math.max(s, rs), ce = Math.min(e, re);
+  return `left:${pct(cs, rs, re)}%;width:${pct(ce, rs, re) - pct(cs, rs, re)}%`;
 }
-function boardRow(v, slots, rs, re) {
-  const cells = slots.map((s) => {
-    const info = slotInfo(v, s.t0, s.t1);
-    return { s, info, key: info ? info.l.id + info.kind : '' };
-  });
-  let html = '';
-  for (let i = 0; i < cells.length;) {
-    const c = cells[i]; let j = i + 1;
-    while (j < cells.length && c.key && cells[j].key === c.key) j++;
-    const n = j - i;
-    if (!c.info) html += `<td class="cell empty${c.s.cls}" data-new="${esc(v.id)}" data-t="${c.s.newAt}"><span class="plus">＋</span></td>`;
-    else html += `<td class="cell has${c.s.cls.includes(' dl') ? ' dl' : ''}" colspan="${n}" data-edit="${c.info.l.id}">${barHtml(c.info, n, rs, re)}</td>`;
-    i = j;
+function layoutBars(v, rs, re) {
+  const items = loansOf(v.id).map((l) => { const [s, e] = span(l); return { l, s, e }; })
+    .filter((x) => x.s < re && x.e > rs).sort((a, b) => a.s - b.s);
+  const laneEnds = [];
+  for (const it of items) {
+    let k = laneEnds.findIndex((end) => end <= it.s);
+    if (k < 0) { k = laneEnds.length; laneEnds.push(0); }
+    laneEnds[k] = it.e; it.lane = k;
   }
-  return `<tr>${vehCell(v)}${html}</tr>`;
+  const preps = [];
+  if (prepMs()) {
+    for (const l of loansOf(v.id)) {
+      if (l.type !== 'loan' || l.undecided || !l.end) continue;
+      const e = span(l)[1];
+      if (e < re && e + prepMs() > rs) preps.push([e, e + prepMs()]);
+    }
+  }
+  return { items, preps, lanes: Math.max(1, laneEnds.length) };
+}
+function hm(d) { return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function barItem(it, lanes, rs, re) {
+  const { l, s, e, lane } = it;
+  const st = status(l), open = l.undecided || !l.end;
+  const cls = ['bar', 's-' + SCLS[st], s < rs ? 'cl' : '', e > re ? 'cr' : '', l.returned ? 'lock' : ''].filter(Boolean).join(' ');
+  const who = l.type === 'loan' ? (l.customer || '（名前なし）') : st;
+  const sd = new Date(s), ed = new Date(e), same = ymd(sd) === ymd(ed);
+  const md = (d) => `${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
+  const tm = open ? `${md(sd)}〜未定` : same ? `${hm(sd)}〜${hm(ed)}` : `${md(sd)}〜${md(ed)}`;
+  const tip = `${st} ${l.customer || ''}\n${fmt(l.start)} → ${open ? '未定' : fmt(l.end)}`;
+  const lanePos = `top:calc(7px + (100% - 14px) * ${lane} / ${lanes});height:calc((100% - 14px) / ${lanes} - ${lanes > 1 ? 2 : 0}px)`;
+  return `<div class="${cls}" data-id="${l.id}" ${l.returned ? 'data-lock="1"' : ''} tabindex="0" title="${esc(tip)}" style="${barPos(s, e, rs, re)};${lanePos}"><i class="h hl"></i><b>${SCODE[st]}</b><span class="t">${esc(who)}</span><span class="tm">${tm}</span>${open || l.returned ? '' : '<i class="h hr"></i>'}</div>`;
+}
+function boardHtml(o) {
+  const { rs, re } = o, vs = activeVehicles(ui.cat), now = Date.now();
+  const nowLine = now >= rs && now < re ? `<i class="nowline" style="left:${pct(now, rs, re)}%"></i>` : '';
+  const rows = vs.map((v) => {
+    const { items, preps, lanes } = layoutBars(v, rs, re);
+    return `<div class="row">${vehDiv(v)}<div class="track" data-v="${esc(v.id)}">${o.shades}${preps.map(([a, b]) => `<div class="bar prep s-prep" style="${barPos(a, b, rs, re)}">準備</div>`).join('')}${items.map((it) => barItem(it, lanes, rs, re)).join('')}${nowLine}</div></div>`;
+  }).join('');
+  return `<div class="board" data-rs="${rs}" data-re="${re}" style="--n:${o.n};--m:${o.m};--rows:${Math.max(vs.length, 1)}">
+    <div class="bi" style="min-width:calc(var(--vw) + ${o.minTrack}px)">
+      <div class="row head"><div class="veh">車両</div><div class="scale">${o.scale}${nowLine}</div></div>
+      ${rows || '<div class="empty-note" style="padding:20px">表示できる車両がありません。「車両マスタ」から追加してください。</div>'}
+    </div></div>${legend()}`;
+}
+function tvBar() {
+  const now = new Date(), nowT = now.getTime();
+  const live = db.loans.filter((l) => !l.cancelled && !l.returned && l.type === 'loan');
+  const busy = new Set(db.loans.filter((l) => !l.cancelled).filter((l) => { const o = occ(l); return o[0] <= nowT && nowT < o[1]; }).map((l) => l.vehicleId));
+  const free = activeVehicles().filter((v) => !busy.has(v.id)).length;
+  const late = live.filter((l) => status(l) === '遅延').length;
+  const out = live.filter((l) => ['貸出中', '遅延', '返却未定'].includes(status(l))).length;
+  return `<div class="tvbar">
+    <div class="clock"><b id="tvClock">${hm(now)}</b><span>${now.getMonth() + 1}月${now.getDate()}日（${WD[now.getDay()]}）</span></div>
+    <div class="tvstats"><span><b>${out}</b>貸出中</span><span><b>${free}</b>空き</span><span class="${late ? 'late' : ''}"><b>${late}</b>遅延</span></div>
+    <span class="spacer"></span>
+    <div class="chips">${[['day', '日別'], ['period', '期間']].map(([v, t]) => `<button class="chip ${ui.view === v ? 'on' : ''}" data-tvview="${v}">${t}</button>`).join('')}</div>
+    ${catChips()}
+    <button class="btn" id="tvExit">終了（Esc）</button>
+  </div>`;
 }
 
 // ---------- 日別 ----------
 function dayView() {
   const { dayStart: h0, dayEnd: h1 } = db.settings;
   const base = dayStart(ui.day).getTime();
-  const hours = []; for (let h = h0; h < h1; h++) hours.push(h);
-  const nowT = Date.now();
-  const slots = hours.map((h) => ({
-    t0: base + h * HOUR, t1: base + (h + 1) * HOUR,
-    cls: nowT >= base + h * HOUR && nowT < base + (h + 1) * HOUR ? ' now' : '',
-    newAt: `${ui.day}T${pad(h)}:00`,
-  }));
-  const rs = base + h0 * HOUR, re = base + h1 * HOUR;
-  const rows = activeVehicles(ui.cat).map((v) => boardRow(v, slots, rs, re)).join('');
+  const n = h1 - h0, rs = base + h0 * HOUR, re = base + h1 * HOUR;
   const nowH = ymd(new Date()) === ui.day ? new Date().getHours() : -1;
+  const scale = Array.from({ length: n }, (_, i) => `<span class="tick ${h0 + i === nowH ? 'today' : ''}" style="left:${(i / n) * 100}%">${h0 + i}:00</span>`).join('');
   const d = dayStart(ui.day);
-  return `
+  const bar = ui.tv ? tvBar() : `
   <div class="toolbar">
-    <h2 style="margin:0">日別ビュー</h2>
-    <button class="btn" data-step="-1">‹</button>
+    <h2>日別ビュー</h2>
+    <button class="btn" data-step="-1" aria-label="前の日">‹</button>
     <input type="date" id="dayPick" value="${ui.day}">
-    <button class="btn" data-step="1">›</button>
+    <button class="btn" data-step="1" aria-label="次の日">›</button>
     <button class="btn" data-today>今日</button>
     <b>${d.getMonth() + 1}月${d.getDate()}日（${WD[d.getDay()]}）</b>
+    <span class="hint">空きをドラッグで予約 ／ 棒をドラッグで移動・端で時間変更</span>
     <span class="spacer"></span>${catChips()}
-  </div>
-  <div class="board"><table style="min-width:calc(var(--vw) + ${hours.length * 56}px)">
-    <thead><tr><th class="veh">車両</th>${hours.map((h) => `<th class="${h === nowH ? 'today' : ''}">${h}:00</th>`).join('')}</tr></thead>
-    <tbody>${rows}</tbody></table></div>${legend()}`;
+  </div>`;
+  return bar + boardHtml({ rs, re, n, m: n * 2, minTrack: n * 64, scale, shades: '' });
 }
 
 // ---------- 期間 ----------
 function periodView() {
   const base = dayStart(ui.pStart).getTime();
-  const days = Array.from({ length: ui.pDays }, (_, i) => new Date(base + i * DAY));
+  const nd = ui.pDays, rs = base, re = base + nd * DAY;
+  const days = Array.from({ length: nd }, (_, i) => new Date(base + i * DAY));
   const today = ymd(new Date());
-  const slots = days.flatMap((d) => [0, 12].map((hh) => ({
-    t0: d.getTime() + hh * HOUR, t1: d.getTime() + (hh + 12) * HOUR,
-    cls: `${ymd(d) === today ? ' tcol' : ''}${d.getDay() === 0 || d.getDay() === 6 ? ' wk' : ''}${hh === 0 ? ' dl' : ''}`,
-    newAt: `${ymd(d)}T${hh === 0 ? '09' : '13'}:00`,
-  })));
-  const rs = base, re = base + ui.pDays * DAY;
-  const rows = activeVehicles(ui.cat).map((v) => boardRow(v, slots, rs, re)).join('');
-  return `
+  const scale = days.map((d) => `<span class="dh ${ymd(d) === today ? 'today' : ''} ${d.getDay() === 0 || d.getDay() === 6 ? 'wk' : ''}">${d.getMonth() + 1}/${d.getDate()}<small>${WD[d.getDay()]}</small></span>`).join('');
+  const shades = days.map((d, i) => {
+    const cls = ymd(d) === today ? 'tcol' : d.getDay() === 0 || d.getDay() === 6 ? 'wk' : '';
+    return cls ? `<i class="shade ${cls}" style="left:${(i / nd) * 100}%;width:${100 / nd}%"></i>` : '';
+  }).join('');
+  const bar = ui.tv ? tvBar() : `
   <div class="toolbar">
-    <h2 style="margin:0">期間ボード</h2>
+    <h2>期間ボード</h2>
     <button class="btn" data-step="-7">‹ 1週</button>
     <input type="date" id="pPick" value="${ui.pStart}">
     <button class="btn" data-step="7">1週 ›</button>
     <button class="btn" data-today>今日</button>
-    <select id="pDays">${[7, 14, 21, 28].map((n) => `<option value="${n}" ${n === ui.pDays ? 'selected' : ''}>${n}日間</option>`).join('')}</select>
-    <span class="hint">各日 左=午前 / 右=午後</span>
+    <select id="pDays">${[7, 14, 21, 28].map((k) => `<option value="${k}" ${k === ui.pDays ? 'selected' : ''}>${k}日間</option>`).join('')}</select>
     <span class="spacer"></span>${catChips()}
-  </div>
-  <div class="board"><table style="min-width:calc(var(--vw) + ${ui.pDays * 76}px)">
-    <thead><tr><th class="veh" rowspan="1">車両</th>${days.map((d) => `<th colspan="2" class="dl ${ymd(d) === today ? 'today' : ''}${d.getDay() === 0 || d.getDay() === 6 ? ' wk' : ''}">${d.getMonth() + 1}/${d.getDate()}<small>${WD[d.getDay()]}</small></th>`).join('')}</tr></thead>
-    <tbody>${rows}</tbody></table></div>${legend()}`;
+  </div>`;
+  return bar + boardHtml({ rs, re, n: nd, m: nd * 2, minTrack: nd * 76, scale, shades });
 }
 
+// ---------- ボードの操作 ----------
 function bindBoard() {
+  const go = () => { ui.center = true; render(); };
   const step = (n) => {
     if (ui.view === 'day') ui.day = ymd(new Date(dayStart(ui.day).getTime() + n * DAY + 12 * HOUR));
     else ui.pStart = ymd(new Date(dayStart(ui.pStart).getTime() + n * DAY + 12 * HOUR));
-    render();
+    go();
   };
-  main.querySelectorAll('[data-step]').forEach((b) => b.onclick = () => step(Number(b.dataset.step) * (ui.view === 'day' ? 1 : 1)));
-  main.querySelectorAll('[data-today]').forEach((b) => b.onclick = () => { ui.day = ui.pStart = ymd(new Date()); render(); });
-  const dp = $('#dayPick'); if (dp) dp.onchange = () => { if (dp.value) { ui.day = dp.value; render(); } };
+  main.querySelectorAll('[data-step]').forEach((b) => b.onclick = () => step(Number(b.dataset.step)));
+  main.querySelectorAll('[data-today]').forEach((b) => b.onclick = () => { ui.day = ui.pStart = ymd(new Date()); go(); });
+  const dp = $('#dayPick'); if (dp) dp.onchange = () => { if (dp.value) { ui.day = dp.value; go(); } };
   const pp = $('#pPick'); if (pp) pp.onchange = () => { if (pp.value) { ui.pStart = pp.value; render(); } };
   const pd = $('#pDays'); if (pd) pd.onchange = () => { ui.pDays = Number(pd.value); render(); };
-  main.querySelectorAll('[data-new]').forEach((c) => c.onclick = () => openLoan(null, { vehicleId: c.dataset.new, start: c.dataset.t }));
-  bindLedger();
   main.querySelectorAll('[data-vedit]').forEach((c) => c.onclick = () => openVeh(c.dataset.vedit));
   main.querySelectorAll('[data-cat]').forEach((c) => c.onclick = () => { ui.cat = c.dataset.cat; render(); });
-  // 日別ビューは現在時刻の付近が見えるようにスクロール
-  const bd = $('.board');
-  if (bd && ui.view === 'day' && ui.day === ymd(new Date())) {
-    const nowCell = bd.querySelector('.now'); if (nowCell) bd.scrollLeft = Math.max(0, nowCell.offsetLeft - bd.clientWidth / 2);
-  }
+  main.querySelectorAll('[data-tvview]').forEach((c) => c.onclick = () => { ui.view = c.dataset.tvview; ui.center = true; render(); });
+  const ex = $('#tvExit'); if (ex) ex.onclick = exitTv;
+  initDrag();
 }
+
+// ---------- ボード表示（大画面）モード ----------
+function enterTv() {
+  ui.tv = true;
+  if (!['day', 'period'].includes(ui.view)) ui.view = 'day';
+  ui.day = ymd(new Date()); ui.pStart = ymd(new Date()); ui.center = true;
+  try { const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* 全画面にできなくても続行 */ }
+  render();
+}
+function exitTv() {
+  ui.tv = false;
+  try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* 無視 */ }
+  render();
+}
+
+// ---------- ドラッグ操作（作成・移動・時間変更） ----------
+let dragging = false, suppressClick = false;
+const snapMs = () => (ui.view === 'day' ? 15 * 60e3 : HOUR);
+const snapT = (t) => Math.round(t / snapMs()) * snapMs();
+function timeAt(track, x) {
+  const bd = $('.board'), rs = Number(bd.dataset.rs), re = Number(bd.dataset.re);
+  const r = track.getBoundingClientRect();
+  return rs + Math.min(1, Math.max(0, (x - r.left) / r.width)) * (re - rs);
+}
+function placeBar(el, s, e) {
+  const bd = $('.board'), rs = Number(bd.dataset.rs), re = Number(bd.dataset.re);
+  const cs = Math.max(s, rs), ce = Math.min(e, re);
+  el.style.left = pct(cs, rs, re) + '%';
+  el.style.width = Math.max(0, pct(ce, rs, re) - pct(cs, rs, re)) + '%';
+  el.classList.toggle('cl', s < rs); el.classList.toggle('cr', e > re);
+}
+function initDrag() {
+  const bd = $('.board'); if (!bd) return;
+  bd.addEventListener('click', (e) => {
+    if (suppressClick) return;
+    const bar = e.target.closest('.bar');
+    if (bar && bar.dataset.id) return openLoan(bar.dataset.id);
+    const track = e.target.closest('.track');
+    if (!track) return;
+    openLoan(null, { vehicleId: track.dataset.v, start: toInput(new Date(snapT(timeAt(track, e.clientX)))) });
+  });
+  bd.addEventListener('keydown', (e) => {
+    const bar = e.target.closest && e.target.closest('.bar');
+    if (bar && bar.dataset.id && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openLoan(bar.dataset.id); }
+  });
+  bd.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch' || e.button !== 0) return; // タッチはスクロール優先（タップで編集）
+    const track = e.target.closest('.track'); if (!track) return;
+    const bar = e.target.closest('.bar');
+    let mode = 'create', loan = null, orig = null;
+    if (bar && bar.dataset.id) {
+      loan = db.loans.find((l) => l.id === bar.dataset.id);
+      if (!loan || bar.dataset.lock) return;
+      mode = e.target.classList.contains('hl') ? 'rl' : e.target.classList.contains('hr') ? 'rr' : 'move';
+      const [s, en] = span(loan);
+      orig = { s, e: en, hasEnd: !(loan.undecided || !loan.end) };
+    }
+    const rect = track.getBoundingClientRect();
+    const rs = Number(bd.dataset.rs), re = Number(bd.dataset.re), msPerPx = (re - rs) / rect.width;
+    const sx = e.clientX, sy = e.clientY, anchor = snapT(timeAt(track, e.clientX));
+    let moved = false, ghost = null, result = null, curTrack = track;
+
+    const onMove = (ev) => {
+      if (!moved) {
+        if (Math.abs(ev.clientX - sx) < 4 && (mode === 'create' || Math.abs(ev.clientY - sy) < 6)) return;
+        moved = true; dragging = true; document.body.classList.add('dragging');
+        if (bar) bar.classList.add('drag');
+        else { ghost = document.createElement('div'); ghost.className = 'bar ghost'; track.appendChild(ghost); }
+      }
+      const dt = (ev.clientX - sx) * msPerPx;
+      if (mode === 'create') {
+        let a = anchor, b = snapT(timeAt(track, ev.clientX));
+        if (a > b) [a, b] = [b, a];
+        if (b - a < snapMs()) b = a + snapMs();
+        result = { s: a, e: b }; placeBar(ghost, a, b);
+      } else if (mode === 'move') {
+        const ns = snapT(orig.s + dt), shift = ns - orig.s;
+        const t2 = document.elementsFromPoint(ev.clientX, ev.clientY).find((x) => x.classList && x.classList.contains('track'));
+        if (t2 && t2 !== curTrack) { curTrack = t2; t2.appendChild(bar); bar.style.top = '7px'; bar.style.height = 'calc(100% - 14px)'; }
+        result = { s: ns, e: orig.e + shift, vid: curTrack.dataset.v }; placeBar(bar, result.s, result.e);
+      } else if (mode === 'rl') {
+        const ns = Math.min(snapT(orig.s + dt), (orig.hasEnd ? orig.e : Infinity) - snapMs());
+        result = { s: ns, e: orig.e }; placeBar(bar, ns, orig.e);
+      } else {
+        const ne = Math.max(snapT(orig.e + dt), orig.s + snapMs());
+        result = { s: orig.s, e: ne }; placeBar(bar, orig.s, ne);
+      }
+    };
+    const onUp = async () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      document.body.classList.remove('dragging');
+      if (!moved) return;
+      suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
+      if (ghost) ghost.remove();
+      if (mode === 'create') {
+        dragging = false;
+        openLoan(null, { vehicleId: track.dataset.v, start: toInput(new Date(result.s)), end: toInput(new Date(result.e)) });
+        return;
+      }
+      await commitMove(loan, mode, result, orig);
+      dragging = false;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  });
+}
+async function commitMove(loan, mode, r, orig) {
+  const prev = { vehicleId: loan.vehicleId, start: loan.start, end: loan.end };
+  const next = { ...loan, vehicleId: r.vid || loan.vehicleId, start: toInput(new Date(r.s)) };
+  if (orig.hasEnd) next.end = toInput(new Date(r.e));
+  if (next.vehicleId === prev.vehicleId && next.start === prev.start && next.end === prev.end) { render(); return; }
+  if (conflicts(next).length && !(await ask('同じ車で時間が重複します。この位置にしますか？'))) { render(); return; }
+  Object.assign(loan, { vehicleId: next.vehicleId, start: next.start, end: next.end });
+  save(); render();
+  notify(`${vehicle(loan.vehicleId)?.name || ''} ${fmt(loan.start)}〜${loan.end ? fmt(loan.end) : '未定'} に変更しました`,
+    () => { Object.assign(loan, prev); save(); render(); });
+}
+
 
 // ---------- 台帳 ----------
 const SORT_COLS = [['status', '状態'], ['vehicle', '車両'], ['cat', '登録'], ['customer', 'お客様'], ['staff', '担当'], ['start', '開始'], ['end', '終了'], ['note', 'メモ']];
@@ -578,10 +735,23 @@ vehForm.addEventListener('submit', (e) => {
 });
 
 // ---------- 起動 ----------
-$('#nav').onclick = (e) => { const b = e.target.closest('button'); if (b) { ui.view = b.dataset.view; window.scrollTo(0, 0); render(); } };
+$('#nav').onclick = (e) => { const b = e.target.closest('button'); if (b) { ui.view = b.dataset.view; ui.center = true; window.scrollTo(0, 0); render(); } };
 $('#newLoan').onclick = () => openLoan(null);
-window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (VIEWS.includes(h) && h !== ui.view) { ui.view = h; render(); } });
+$('#tvBtn').onclick = enterTv;
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ui.tv && !document.querySelector('dialog[open]')) exitTv(); });
+window.addEventListener('hashchange', () => {
+  const h = location.hash.slice(1);
+  if (h === 'tv') { if (!ui.tv) enterTv(); return; }
+  if (VIEWS.includes(h) && (h !== ui.view || ui.tv)) { ui.tv = false; ui.view = h; render(); }
+});
 load();
-if (VIEWS.includes(location.hash.slice(1))) ui.view = location.hash.slice(1);
+const h0 = location.hash.slice(1);
+if (h0 === 'tv') { ui.tv = true; ui.view = 'day'; } else if (VIEWS.includes(h0)) ui.view = h0;
+ui.center = true;
 render();
-setInterval(() => { if (!document.querySelector('dialog[open]') && ui.view !== 'search' && !document.activeElement.matches('input,select,textarea')) render(); }, 60000);
+setInterval(() => {
+  if (dragging || document.querySelector('dialog[open]')) return;
+  if (ui.tv) { ui.day = ymd(new Date()); render(); return; }
+  if (ui.view !== 'search' && !document.activeElement.matches('input,select,textarea')) render();
+}, 30000);
+setInterval(() => { const c = document.getElementById('tvClock'); if (c) c.textContent = hm(new Date()); }, 1000);
