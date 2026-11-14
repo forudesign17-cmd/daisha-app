@@ -114,7 +114,7 @@ function loansOf(vid) { return db.loans.filter((l) => l.vehicleId === vid && !l.
 
 // ---------- UI状態 ----------
 const VIEWS = ['dashboard', 'day', 'period', 'ledger', 'search', 'master'];
-const ui = { view: 'dashboard', day: ymd(new Date()), pStart: ymd(new Date()), pDays: 14, filter: '', fstatus: '', cat: '', sort: { key: 'start', dir: -1 }, search: {} };
+const ui = { view: 'dashboard', day: ymd(new Date()), pStart: ymd(new Date()), pDays: 14, filter: '', fstatus: '', fveh: '', cat: '', sort: { key: 'start', dir: -1 }, search: {} };
 const $ = (s, r = document) => r.querySelector(s);
 const main = $('#main');
 const isPhone = () => window.matchMedia('(max-width:760px)').matches;
@@ -326,6 +326,7 @@ function ledger() {
   const rows = db.loans.slice().filter((l) => {
     const st = status(l);
     if (ui.fstatus && st !== ui.fstatus) return false;
+    if (ui.fveh && l.vehicleId !== ui.fveh) return false;
     const v = vehicle(l.vehicleId);
     return !q || [l.customer, l.staff, l.note, v?.name, v?.plate, v?.id].join(' ').toLowerCase().includes(q);
   }).sort(sorter).map((l) => {
@@ -341,6 +342,7 @@ function ledger() {
   <div class="toolbar">
     <h2 style="margin:0">貸出台帳</h2>
     <input id="fq" type="search" placeholder="検索（お客様・車名・ナンバー…）" value="${esc(ui.filter)}" style="min-width:200px;flex:1;max-width:320px">
+    <select id="fveh" aria-label="車両で絞り込み"><option value="">すべての車両</option>${db.vehicles.map((v) => `<option value="${esc(v.id)}" ${v.id === ui.fveh ? 'selected' : ''}>${esc(`${v.name} ${v.plate}`)}${v.active === false ? '（停止）' : ''}</option>`).join('')}</select>
     <select id="fst"><option value="">すべてのステータス</option>${Object.keys(SCLS).map((s) => `<option ${s === ui.fstatus ? 'selected' : ''}>${s}</option>`).join('')}</select>
     <span class="sortbar"><select id="sortKey" aria-label="並び替え">${SORT_COLS.map(([k, t]) => `<option value="${k}" ${k === key ? 'selected' : ''}>${t}で並び替え</option>`).join('')}</select>
       <button class="btn" id="sortDir" aria-label="昇順・降順">${dir === 1 ? '▲ 昇順' : '▼ 降順'}</button></span>
@@ -355,6 +357,7 @@ function ledger() {
 function bindLedger() {
   main.querySelectorAll('[data-edit]').forEach((r) => r.onclick = () => openLoan(r.dataset.edit));
   const fq = $('#fq'); if (fq) fq.oninput = () => { ui.filter = fq.value; const p = fq.selectionStart; render(); const n = $('#fq'); n.focus(); n.setSelectionRange(p, p); };
+  const fveh = $('#fveh'); if (fveh) fveh.onchange = () => { ui.fveh = fveh.value; render(); };
   const fst = $('#fst'); if (fst) fst.onchange = () => { ui.fstatus = fst.value; render(); };
   const setSort = (k) => { ui.sort = k === ui.sort.key ? { key: k, dir: -ui.sort.dir } : { key: k, dir: k === 'start' || k === 'end' ? -1 : 1 }; render(); };
   main.querySelectorAll('th[data-sort]').forEach((th) => {
