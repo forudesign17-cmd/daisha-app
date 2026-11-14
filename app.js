@@ -114,7 +114,7 @@ function loansOf(vid) { return db.loans.filter((l) => l.vehicleId === vid && !l.
 
 // ---------- UI状態 ----------
 const VIEWS = ['dashboard', 'day', 'period', 'ledger', 'search', 'master'];
-const ui = { view: 'dashboard', day: ymd(new Date()), pStart: ymd(new Date()), pDays: 14, filter: '', fstatus: '', cat: '', search: {} };
+const ui = { view: 'dashboard', day: ymd(new Date()), pStart: ymd(new Date()), pDays: 14, filter: '', fstatus: '', cat: '', sort: { key: 'start', dir: -1 }, search: {} };
 const $ = (s, r = document) => r.querySelector(s);
 const main = $('#main');
 const isPhone = () => window.matchMedia('(max-width:760px)').matches;
@@ -299,14 +299,36 @@ function bindBoard() {
 }
 
 // ---------- 台帳 ----------
+const SORT_COLS = [['status', '状態'], ['vehicle', '車両'], ['cat', '登録'], ['customer', 'お客様'], ['staff', '担当'], ['start', '開始'], ['end', '終了'], ['note', 'メモ']];
+const STATUS_ORDER = ['遅延', '返却未定', '貸出中', '予約', '社用', '使用不可', '返却済', '取消'];
+function sortKey(l, key) {
+  const v = vehicle(l.vehicleId);
+  switch (key) {
+    case 'status': return STATUS_ORDER.indexOf(status(l));
+    case 'vehicle': return v ? `${v.name} ${v.plate}` : l.vehicleId;
+    case 'cat': return v ? v.category : '';
+    case 'customer': return l.customer || '';
+    case 'staff': return l.staff || '';
+    case 'start': return l.start || '';
+    case 'end': return l.undecided || !l.end ? '9999' : l.end;
+    default: return l.note || '';
+  }
+}
 function ledger() {
   const q = ui.filter.trim().toLowerCase();
-  const rows = db.loans.slice().sort((a, b) => b.start.localeCompare(a.start)).filter((l) => {
+  const { key, dir } = ui.sort;
+  const sorter = (a, b) => {
+    const x = sortKey(a, key), y = sortKey(b, key);
+    const c = typeof x === 'number' ? x - y : String(x).localeCompare(String(y), 'ja');
+    return (c * dir) || b.start.localeCompare(a.start);
+  };
+  const arrow = (k) => (k === key ? (dir === 1 ? ' ▲' : ' ▼') : '');
+  const rows = db.loans.slice().filter((l) => {
     const st = status(l);
     if (ui.fstatus && st !== ui.fstatus) return false;
     const v = vehicle(l.vehicleId);
     return !q || [l.customer, l.staff, l.note, v?.name, v?.plate, v?.id].join(' ').toLowerCase().includes(q);
-  }).map((l) => {
+  }).sort(sorter).map((l) => {
     const v = vehicle(l.vehicleId), st = status(l), c = conflicts(l), ins = inspectionIssue(l);
     return `<tr class="click ${c.length ? 'conflict' : ''}" data-edit="${l.id}">
       <td data-label="状態">${badge(st)}${c.length ? ' <span class="red">時間が重複</span>' : ''}${ins ? ' <span class="red">車検</span>' : ''}</td>
@@ -320,18 +342,27 @@ function ledger() {
     <h2 style="margin:0">貸出台帳</h2>
     <input id="fq" type="search" placeholder="検索（お客様・車名・ナンバー…）" value="${esc(ui.filter)}" style="min-width:200px;flex:1;max-width:320px">
     <select id="fst"><option value="">すべてのステータス</option>${Object.keys(SCLS).map((s) => `<option ${s === ui.fstatus ? 'selected' : ''}>${s}</option>`).join('')}</select>
+    <span class="sortbar"><select id="sortKey" aria-label="並び替え">${SORT_COLS.map(([k, t]) => `<option value="${k}" ${k === key ? 'selected' : ''}>${t}で並び替え</option>`).join('')}</select>
+      <button class="btn" id="sortDir" aria-label="昇順・降順">${dir === 1 ? '▲ 昇順' : '▼ 降順'}</button></span>
     <span class="spacer"></span>
     <button class="btn" id="btnExport">バックアップ</button>
     <button class="btn" id="btnImport">復元</button><input type="file" id="fileImport" accept=".json" hidden>
   </div>
   <div class="card scroll cardwrap" style="padding:6px 10px"><table class="stack">
-    <thead><tr><th>状態</th><th>車両</th><th>登録</th><th>お客様</th><th>担当</th><th>開始</th><th>終了</th><th>メモ</th></tr></thead>
+    <thead><tr>${SORT_COLS.map(([k, t]) => `<th class="sortable ${k === key ? 'sorted' : ''}" data-sort="${k}" tabindex="0" aria-sort="${k === key ? (dir === 1 ? 'ascending' : 'descending') : 'none'}">${t}${arrow(k)}</th>`).join('')}</tr></thead>
     <tbody>${rows || '<tr><td colspan="8" class="muted">該当なし。右上の「＋ 新規貸出」から登録できます。</td></tr>'}</tbody></table></div>`;
 }
 function bindLedger() {
   main.querySelectorAll('[data-edit]').forEach((r) => r.onclick = () => openLoan(r.dataset.edit));
   const fq = $('#fq'); if (fq) fq.oninput = () => { ui.filter = fq.value; const p = fq.selectionStart; render(); const n = $('#fq'); n.focus(); n.setSelectionRange(p, p); };
   const fst = $('#fst'); if (fst) fst.onchange = () => { ui.fstatus = fst.value; render(); };
+  const setSort = (k) => { ui.sort = k === ui.sort.key ? { key: k, dir: -ui.sort.dir } : { key: k, dir: k === 'start' || k === 'end' ? -1 : 1 }; render(); };
+  main.querySelectorAll('th[data-sort]').forEach((th) => {
+    th.onclick = () => setSort(th.dataset.sort);
+    th.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSort(th.dataset.sort); } };
+  });
+  const sk = $('#sortKey'); if (sk) sk.onchange = () => { ui.sort = { key: sk.value, dir: sk.value === 'start' || sk.value === 'end' ? -1 : 1 }; render(); };
+  const sd = $('#sortDir'); if (sd) sd.onclick = () => { ui.sort.dir *= -1; render(); };
   const ex = $('#btnExport'); if (ex) ex.onclick = exportJson;
   const im = $('#btnImport'); if (im) im.onclick = () => $('#fileImport').click();
   const fi = $('#fileImport'); if (fi) fi.onchange = () => importJson(fi.files[0]);
