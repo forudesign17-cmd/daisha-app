@@ -22,7 +22,8 @@ button{font:inherit}
   padding:10px max(var(--gutter),env(safe-area-inset-left,0px)) 10px max(var(--gutter),env(safe-area-inset-right,0px));
   background:rgba(255,255,255,.8);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
   border-bottom:1px solid var(--line)}
-.brand{font-weight:700;font-size:17px;white-space:nowrap}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;white-space:nowrap;line-height:1.25}
+.brand .logo{width:36px;height:36px;flex:none;display:block}
 .brand small{display:block;font-weight:400;font-size:11px;color:var(--sub);line-height:1.2}
 .seg{display:flex;background:#e9e9ee;border-radius:10px;padding:2px;gap:2px;margin:0 auto}
 .seg button{border:0;background:transparent;padding:6px 14px;border-radius:8px;cursor:pointer;color:var(--text);white-space:nowrap}
