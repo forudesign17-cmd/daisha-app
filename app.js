@@ -284,9 +284,9 @@ function dayView() {
   const bar = ui.tv ? tvBar() : `
   <div class="toolbar">
     <h2>日別ビュー</h2>
-    <button class="btn" data-step="-1" aria-label="前の日">‹</button>
+    <button class="btn icon" data-step="-1" aria-label="前の日">‹</button>
     <input type="date" id="dayPick" value="${ui.day}">
-    <button class="btn" data-step="1" aria-label="次の日">›</button>
+    <button class="btn icon" data-step="1" aria-label="次の日">›</button>
     <button class="btn" data-today>今日</button>
     <b>${d.getMonth() + 1}月${d.getDate()}日（${WD[d.getDay()]}）</b>
     <span class="hint">空きをドラッグで予約 ／ 棒をドラッグで移動・端で時間変更</span>
