@@ -329,3 +329,24 @@ body.dragging .bar:not(.drag):not(.ghost):not(.prep){opacity:.55;transition:opac
   .bar.pressing{filter:brightness(.94)}
   .bar.drag{transform:scale(1.03)}
 }
+
+/* ---- 持ち上がった感じ（PC・スマホ共通） ---- */
+.bar.drag{box-shadow:0 18px 34px rgba(0,0,0,.30),0 4px 10px rgba(0,0,0,.18);transform:scale(1.06) rotate(var(--rot,0deg));transition:transform .12s ease-out;z-index:9;opacity:1}
+@media (hover:hover) and (pointer:fine){
+  .bar:not(.lock):not(.drag):not(.prep):hover{transform:translateY(-1px);box-shadow:0 5px 12px rgba(0,0,0,.16);transition:transform .12s ease-out,box-shadow .12s ease-out}
+}
+@media (prefers-reduced-motion:no-preference){
+  .bar.drag{animation:lift2 .26s cubic-bezier(.3,1.7,.5,1)}
+  @keyframes lift2{
+    0%{transform:scale(.97);box-shadow:0 1px 2px rgba(0,0,0,.10)}
+    100%{transform:scale(1.06) rotate(0deg);box-shadow:0 18px 34px rgba(0,0,0,.30),0 4px 10px rgba(0,0,0,.18)}
+  }
+  @keyframes flash{
+    0%{transform:scale(1.06) rotate(-1deg);box-shadow:0 14px 26px rgba(0,0,0,.26)}
+    55%{transform:scale(.99);box-shadow:0 0 0 8px rgba(0,113,227,.25)}
+    100%{transform:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06)}
+  }
+}
+@media (prefers-reduced-motion:reduce){
+  .bar.drag{transform:scale(1.03)}
+}

@@ -531,7 +531,15 @@ function initDrag() {
     };
     if (touch) { if (bar) bar.classList.add('pressing'); else ring = spawn('hold-ring'); }
 
+    let rot = 0, prevX = x0, decayT = null;
+    const tilt = (x) => { // 動かす向きにわずかに傾けて、「手で持っている」感じを出す
+      if (!bar || mode !== 'move') return;
+      rot = rot * 0.6 + Math.max(-3.5, Math.min(3.5, (x - prevX) * 0.5)) * 0.4; prevX = x;
+      bar.style.setProperty('--rot', rot.toFixed(2) + 'deg');
+      clearTimeout(decayT); decayT = setTimeout(() => { rot = 0; bar.style.setProperty('--rot', '0deg'); }, 110);
+    };
     const apply = (x, y) => {
+      tilt(x);
       const dt = timeAt(track, x) - grab;
       if (mode === 'create') {
         let a = anchor, b = snapT(timeAt(track, x));
@@ -561,7 +569,7 @@ function initDrag() {
         apply(lx, ly);
       }, 30);
     };
-    const dispose = () => { clearInterval(edgeTimer); touchDrag = false; document.body.classList.remove('dragging'); clearPress(); };
+    const dispose = () => { clearInterval(edgeTimer); clearTimeout(decayT); touchDrag = false; document.body.classList.remove('dragging'); clearPress(); };
     return {
       arm() { // タッチ: 長押し成立
         armed = true; sx = lx; sy = ly; anchor = snapT(timeAt(track, sx)); grab = timeAt(track, sx);
