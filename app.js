@@ -2,7 +2,7 @@
 /* 代車管理 — 素のJS + localStorage の試作 */
 
 // ---------- 保存 ----------
-const KEY = 'daisha-v1';
+const KEY = 'daisha-v1:' + ((window.SESSION && window.SESSION.shop) || 'none'); // 店舗ごとにデータを分ける
 const HOUR = 3600e3, DAY = 24 * HOUR, FAR = 3650 * DAY;
 let db;
 
@@ -65,9 +65,11 @@ function normalizeDb(d) {
   d.loans = (Array.isArray(d.loans) ? d.loans : []).filter((l) => l && l.id && l.start && !Number.isNaN(new Date(l.start).getTime()));
   return d;
 }
+const emptyDb = () => ({ settings: { prepHours: 1, dayStart: 8, dayEnd: 20 }, staff: [], vehicles: [], loans: [] });
 function load() {
   try { db = JSON.parse(localStorage.getItem(KEY)); } catch (e) { db = null; }
-  if (!db || !Array.isArray(db.vehicles)) { db = seed(); save(); } else normalizeDb(db);
+  // 初めて開く店舗: サンプル有りの店舗はデモデータ、それ以外は空の状態から始める
+  if (!db || !Array.isArray(db.vehicles)) { db = window.SESSION && window.SESSION.sample ? seed() : emptyDb(); save(); } else normalizeDb(db);
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* 保存不可の環境ではメモリのみ */ } }
 
@@ -206,7 +208,7 @@ function render() {
   if (location.hash.slice(1) !== h) history.replaceState(null, '', '#' + h);
   document.body.classList.toggle('tv', !!ui.tv);
   document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.view === ui.view));
-  const t = new Date(); $('#today').textContent = `${t.getMonth() + 1}月${t.getDate()}日（${WD[t.getDay()]}）`;
+  const t = new Date(); $('#today').textContent = `${window.SESSION ? window.SESSION.name + ' ・ ' : ''}${t.getMonth() + 1}月${t.getDate()}日（${WD[t.getDay()]}）`;
   const fn = { dashboard, day: dayView, period: periodView, ledger, search: searchView, master }[ui.view];
   const sx = window.scrollX, sy = window.scrollY;
   const old = $('.board'), sl = old ? old.scrollLeft : 0, st = old ? old.scrollTop : 0;
@@ -256,6 +258,13 @@ function centerNow(bd) {
 
 // ---------- ダッシュボード ----------
 function dashboard() {
+  if (!db.vehicles.length) {
+    return `<div class="card" style="max-width:560px;margin:24px auto;text-align:center;padding:32px 24px">
+      <img src="logo.svg" alt="" width="64" height="64" style="border-radius:18px">
+      <h2 style="margin:14px 0 8px">はじめまして</h2>
+      <p class="muted" style="margin:0 0 20px;line-height:1.8">まずは、お店の代車・レンタカーを登録しましょう。<br>登録すると、ここに今日の状況が表示されます。</p>
+      <button class="btn primary" data-go="master">車両を登録する</button></div>`;
+  }
   const now = Date.now(), todayS = ymd(new Date());
   const live = db.loans.filter((l) => !l.cancelled && !l.returned);
   const st = (l) => status(l, now);
@@ -727,6 +736,7 @@ function ledger() {
     <tbody>${rows || '<tr><td colspan="8" class="muted">該当なし。右上の「＋ 新規貸出」から登録できます。</td></tr>'}</tbody></table></div>`;
 }
 function bindLedger() {
+  main.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { ui.view = b.dataset.go; ui.anim = true; render(); });
   main.querySelectorAll('[data-edit]').forEach((r) => r.onclick = () => openLoan(r.dataset.edit));
   main.querySelectorAll('[data-vedit]').forEach((r) => r.onclick = () => openVeh(r.dataset.vedit));
   const fq = $('#fq'); if (fq) fq.oninput = () => { ui.filter = fq.value; const p = fq.selectionStart; render(); const n = $('#fq'); n.focus(); n.setSelectionRange(p, p); };
@@ -799,7 +809,7 @@ function master() {
     <td data-label="状態">${v.active === false ? '<span class="muted">停止</span>' : '使用中'}</td><td data-label="メモ" class="muted">${esc(v.note)}</td></tr>`).join('');
   return `
   <div class="toolbar"><h2 style="margin:0">車両マスタ</h2><span class="muted">${db.vehicles.length}台（上限30台）</span><span class="spacer"></span>
-    <button class="btn danger" id="demoReset" title="デモ用の20台のサンプルに入れ替えます">サンプルに戻す</button>
+    ${window.SESSION && window.SESSION.sample ? '<button class="btn danger" id="demoReset" title="デモ用の20台のサンプルに入れ替えます">サンプルに戻す</button>' : ''}
     <button class="btn primary" id="vNew">＋ 車両を追加</button></div>
   <div class="card scroll cardwrap" style="padding:6px 10px;margin-bottom:18px"><table class="stack">
     <thead><tr><th>ID</th><th>車名</th><th>ナンバー</th><th>登録区分</th><th>車検期限</th><th>オイル</th><th>履歴</th><th>状態</th><th>メモ</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -811,15 +821,20 @@ function master() {
       <label>日別ビュー 終了時刻<input type="number" min="1" max="24" id="setE" value="${db.settings.dayEnd}"></label></div></div>
     <div class="card"><h3>担当者</h3><ul class="list">${db.staff.map((s, i) => `<li><span class="grow">${esc(s)}</span><button class="btn sm danger" data-sdel="${i}">削除</button></li>`).join('')}</ul>
       <div class="toolbar" style="margin:10px 0 0"><input id="sName" placeholder="担当者名" style="flex:1"><button class="btn" id="sAdd">追加</button></div></div>
+    <div class="card"><h3>アカウント</h3>
+      <p style="margin:0 0 6px">ログイン中: <b>${esc(window.SESSION ? window.SESSION.name : '')}</b> <span class="muted">（店舗ID: ${esc(window.SESSION ? window.SESSION.shop : '')}）</span></p>
+      <p class="hint" style="margin:0 0 12px">入力したデータは、この端末のブラウザに保存されています。</p>
+      <button class="btn" id="logoutBtn">ログアウト</button></div>
   </div>`;
 }
 function bindMaster() {
   main.querySelectorAll('[data-vedit]').forEach((r) => r.onclick = () => openVeh(r.dataset.vedit));
   $('#vNew').onclick = () => openVeh(null);
-  $('#demoReset').onclick = async () => {
+  if ($('#demoReset')) $('#demoReset').onclick = async () => {
     if (!(await ask('今のデータをすべて消して、デモ用のサンプルデータ（20台）に入れ替えます。よろしいですか？（元に戻せません）'))) return;
     db = seed(); save(); notify('サンプルデータに入れ替えました'); render();
   };
+  $('#logoutBtn').onclick = async () => { if (await ask('ログアウトしますか？')) Auth.logout(); };
   const setting = () => {
     db.settings.prepHours = Math.max(0, Number($('#setPrep').value) || 0);
     let s = Math.min(23, Math.max(0, Number($('#setS').value) || 0)), e = Math.min(24, Math.max(1, Number($('#setE').value) || 20));
@@ -987,6 +1002,7 @@ window.addEventListener('hashchange', () => {
   if (h === 'tv') { if (!ui.tv) enterTv(); return; }
   if (VIEWS.includes(h) && (h !== ui.view || ui.tv)) { ui.tv = false; ui.view = h; ui.anim = true; render(); }
 });
+if (window.SESSION) {
 load();
 const h0 = location.hash.slice(1);
 if (h0 === 'tv') { ui.tv = true; ui.view = 'day'; } else if (VIEWS.includes(h0)) ui.view = h0;
@@ -998,3 +1014,4 @@ setInterval(() => {
   if (ui.view !== 'search' && !document.activeElement.matches('input,select,textarea')) render();
 }, 30000);
 setInterval(() => { const c = document.getElementById('tvClock'); if (c) c.textContent = hm(new Date()); }, 1000);
+}

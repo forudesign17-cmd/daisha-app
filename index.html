@@ -2,6 +2,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="claude:viewport-fit-sides" content="cover">
 <title>代車管理くん</title>
+<script src="accounts.js"></script>
+<script src="auth.js"></script>
+<script>
+  // ログインしていなければログイン画面へ（ログイン後は元の画面に戻る）
+  window.SESSION = window.Auth ? Auth.read() : null;
+  if (!window.SESSION) location.replace('login.html?next=' + encodeURIComponent(/^#[a-z]{1,12}$/.test(location.hash) ? location.hash : ''));
+</script>
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-title" content="代車管理くん">
