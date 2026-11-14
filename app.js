@@ -7,26 +7,54 @@ const HOUR = 3600e3, DAY = 24 * HOUR, FAR = 3650 * DAY;
 let db;
 
 function seed() {
+  // デモ用サンプル（20台）。日付は「今日」からの相対なので、いつ開いても今の状況に見える
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const at = (d, h) => toInput(new Date(today.getTime() + d * DAY + h * HOUR));
   const date = (d) => at(d, 0).slice(0, 10);
-  return {
-    settings: { prepHours: 1, dayStart: 8, dayEnd: 20 },
-    staff: ['佐藤', '鈴木', '田中'],
-    vehicles: [
-      { id: 'V01', name: 'ミライース', plate: '品川 500 あ 12-34', category: '代車', inspection: date(200), active: true, note: '', oilLastDate: date(-170), oilLastKm: 42000, odo: 46800, oilMonths: 6, oilKm: 5000 },
-      { id: 'V02', name: 'タント', plate: '品川 580 い 56-78', category: '代車', inspection: date(20), active: true, note: '', oilLastDate: date(-60), oilLastKm: 31000, odo: 32500, oilMonths: 6, oilKm: 5000 },
-      { id: 'V03', name: 'フィット', plate: '品川 500 う 90-12', category: 'レンタカー', inspection: date(120), active: true, note: 'レンタカー保険加入', oilLastDate: date(-220), oilLastKm: 58000, odo: 61000, oilMonths: 6, oilKm: 5000 },
-      { id: 'V04', name: 'アルト', plate: '品川 580 え 34-56', category: '代車', inspection: date(-3), active: true, note: '車検切れ（要更新）' },
-    ],
-    loans: [
-      { id: 'L1', type: 'loan', vehicleId: 'V01', customer: '山田様', staff: '佐藤', start: at(0, 9), end: at(0, 17), undecided: false, returned: false, cancelled: false, note: '車検入庫' },
-      { id: 'L2', type: 'loan', vehicleId: 'V02', customer: '高橋様', staff: '鈴木', start: at(-9, 10), end: '', undecided: true, returned: false, cancelled: false, note: '板金修理' },
-      { id: 'L3', type: 'loan', vehicleId: 'V03', customer: '伊藤様', staff: '田中', start: at(1, 13), end: at(3, 12), undecided: false, returned: false, cancelled: false, note: '' },
-      { id: 'L4', type: 'loan', vehicleId: 'V01', customer: '渡辺様', staff: '佐藤', start: at(-2, 9), end: at(-1, 12), undecided: false, returned: false, cancelled: false, note: '返却処理漏れ' },
-      { id: 'L5', type: 'corp', vehicleId: 'V03', customer: '社用', staff: '田中', start: at(0, 10), end: at(0, 12), undecided: false, returned: false, cancelled: false, note: '' },
-    ],
-  };
+  const kana = 'あいうえおかきくけこさしすせそたちつてと';
+  // [車名, 登録区分, 車検まで(日), 前回オイル交換(日前), 前回交換km, 現在km]
+  const cars = [
+    ['ミライース', '代車', 200, 170, 42000, 46800], ['タント', '代車', 20, 60, 31000, 32500], ['フィット', 'レンタカー', 120, 220, 58000, 61000],
+    ['アルト', '代車', -3, 90, 22000, 24000], ['ノート', '代車', 310, 40, 15000, 16200], ['ヤリス', 'レンタカー', 150, 70, 9000, 11000],
+    ['N-BOX', '代車', 240, 100, 27000, 31600], ['ムーヴ', '代車', 95, 30, 18000, 19000], ['ワゴンR', '代車', 12, 50, 36000, 38000],
+    ['スイフト', '代車', 280, 80, 12000, 14000], ['アクア', 'レンタカー', 60, 120, 40000, 43000], ['プリウス', '代車', 330, 230, 52000, 55500],
+    ['カローラ', 'レンタカー', 180, 45, 20000, 21500], ['ハスラー', '代車', 130, 65, 8000, 10000], ['デイズ', '代車', 220, 20, 5000, 5800],
+    ['ソリオ', '代車', 75, 110, 33000, 36000], ['ジムニー', '代車', 260, 55, 14000, 15500], ['ルーミー', 'レンタカー', 400, 35, 10000, 11200],
+    ['ステップワゴン', '代車', 170, 85, 45000, 48000], ['セレナ', '代車', 90, 25, 26000, 27000],
+  ];
+  const vehicles = cars.map(([name, category, insp, oilAgo, oilKm, odo], i) => ({
+    id: 'V' + pad(i + 1), name, category,
+    plate: `品川 ${category === 'レンタカー' ? '500 わ' : '500 ' + kana[i]} ${10 + ((i * 7) % 80)}-${10 + ((i * 13) % 80)}`,
+    inspection: date(insp), active: true, note: category === 'レンタカー' ? 'レンタカー保険加入' : '',
+    oilLastDate: date(-oilAgo), oilLastKm: oilKm, odo, oilMonths: 6, oilKm: 5000,
+  }));
+  const L = (n, v, customer, staff, start, end, o = {}) => ({
+    id: 'L' + n, type: 'loan', vehicleId: 'V' + pad(v), customer, staff, start, end, undecided: false, returned: false, cancelled: false, note: '', purpose: 'normal', ...o,
+  });
+  const loans = [
+    L(1, 1, '山田様', '佐藤', at(0, 9), at(0, 17), { note: '車検入庫' }),
+    L(2, 2, '高橋様', '鈴木', at(-9, 10), '', { undecided: true, note: '板金修理（部品待ち）' }),
+    L(3, 3, '伊藤様', '田中', at(0, 13), at(3, 12), { purpose: 'insurance', note: '事故修理（保険対応）' }),
+    L(4, 4, '', '田中', at(0, 10), at(2, 17), { type: 'ng', note: '点検整備' }),
+    L(5, 5, '渡辺様', '佐藤', at(-2, 9), at(-1, 15), { note: '返却連絡待ち' }),
+    L(6, 6, '中村様', '鈴木', at(-1, 10), at(1, 17), { purpose: 'insurance', note: '保険対応' }),
+    L(7, 7, '小林様', '田中', at(1, 9), at(1, 18)),
+    L(8, 8, '社用', '田中', at(0, 13), at(0, 15), { type: 'corp', note: '納車の引き取り' }),
+    L(9, 9, '加藤様', '佐藤', at(0, 10), at(0, 16)),
+    L(10, 10, '吉田様', '鈴木', at(2, 9), at(4, 12)),
+    L(11, 11, '山本様', '田中', at(0, 9), at(2, 17), { purpose: 'insurance', note: '保険対応' }),
+    L(12, 12, '松本様', '佐藤', at(1, 13), at(1, 19)),
+    L(13, 12, '井上様', '鈴木', at(3, 9), at(3, 15)),
+    L(14, 13, '清水様', '田中', at(-3, 10), at(-2, 12), { purpose: 'insurance', returned: true, returnedAt: at(-2, 11) }),
+    L(15, 13, '森田様', '鈴木', at(3, 10), at(5, 18), { purpose: 'insurance' }),
+    L(16, 14, '木村様', '田中', at(-4, 13), '', { undecided: true, purpose: 'insurance', note: '保険修理・部品待ち（登録区分の注意の例）' }),
+    L(17, 16, '斉藤様', '佐藤', at(0, 11), at(1, 10)),
+    L(18, 17, '林様', '鈴木', at(2, 10), at(2, 18)),
+    L(19, 18, '山崎様', '田中', at(1, 9), at(3, 17), { purpose: 'insurance', note: '保険対応' }),
+    L(20, 19, '森様', '佐藤', at(-1, 13), at(0, 12)),
+    L(21, 20, '池田様', '鈴木', at(4, 9), at(4, 17)),
+  ];
+  return { settings: { prepHours: 1, dayStart: 8, dayEnd: 20 }, staff: ['佐藤', '鈴木', '田中'], vehicles, loans };
 }
 // 古い形式・壊れたデータでも動くように、足りない項目を補う
 function normalizeDb(d) {
@@ -733,6 +761,7 @@ function master() {
     <td data-label="状態">${v.active === false ? '<span class="muted">停止</span>' : '使用中'}</td><td data-label="メモ" class="muted">${esc(v.note)}</td></tr>`).join('');
   return `
   <div class="toolbar"><h2 style="margin:0">車両マスタ</h2><span class="muted">${db.vehicles.length}台（上限30台）</span><span class="spacer"></span>
+    <button class="btn danger" id="demoReset" title="デモ用の20台のサンプルに入れ替えます">サンプルに戻す</button>
     <button class="btn primary" id="vNew">＋ 車両を追加</button></div>
   <div class="card scroll cardwrap" style="padding:6px 10px;margin-bottom:18px"><table class="stack">
     <thead><tr><th>ID</th><th>車名</th><th>ナンバー</th><th>登録区分</th><th>車検期限</th><th>オイル</th><th>履歴</th><th>状態</th><th>メモ</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -749,6 +778,10 @@ function master() {
 function bindMaster() {
   main.querySelectorAll('[data-vedit]').forEach((r) => r.onclick = () => openVeh(r.dataset.vedit));
   $('#vNew').onclick = () => openVeh(null);
+  $('#demoReset').onclick = async () => {
+    if (!(await ask('今のデータをすべて消して、デモ用のサンプルデータ（20台）に入れ替えます。よろしいですか？（元に戻せません）'))) return;
+    db = seed(); save(); notify('サンプルデータに入れ替えました'); render();
+  };
   const setting = () => {
     db.settings.prepHours = Math.max(0, Number($('#setPrep').value) || 0);
     let s = Math.min(23, Math.max(0, Number($('#setS').value) || 0)), e = Math.min(24, Math.max(1, Number($('#setE').value) || 20));
