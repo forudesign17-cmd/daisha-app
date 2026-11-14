@@ -195,6 +195,7 @@ ul.list .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-sp
 .badge.oil-soon{background:var(--tbd);color:var(--tbd-t)}
 ul.list li.oil{flex-wrap:wrap;row-gap:2px}
 ul.list li.oil .detail{flex:1 1 100%;font-size:12px}
+.badge.ins{background:#e6dcfa;color:#52309a}
 .oilrow{margin-top:3px}
 .oilrow .badge{font-size:10px;padding:1px 7px}
 .stat.warn-card{background:#fff4e5}

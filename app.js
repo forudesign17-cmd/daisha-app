@@ -139,6 +139,15 @@ function oilBadge(v) {
   if (!o || o.level === 'ok') return '';
   return `<span class="badge oil-${o.level}" title="${esc(oilText(o))}">オイル${o.level === 'over' ? '超過' : '間近'}</span>`;
 }
+// ---- 登録区分と用途（保険対応）の食い違い ----
+function purposeIssue(l) {
+  if (!l || l.type !== 'loan' || l.cancelled) return '';
+  const v = vehicle(l.vehicleId); if (!v) return '';
+  const ins = l.purpose === 'insurance';
+  if (v.category === 'レンタカー' && !ins) return 'レンタカー登録の車を、保険対応以外で貸し出そうとしています';
+  if (v.category === '代車' && ins) return '代車登録の車を、保険対応で貸し出そうとしています（レンタカー登録が必要な場合があります）';
+  return '';
+}
 function activeVehicles(cat = '') { return db.vehicles.filter((v) => v.active !== false && (!cat || v.category === cat)); }
 function loansOf(vid) { return db.loans.filter((l) => l.vehicleId === vid && !l.cancelled); }
 
@@ -544,6 +553,7 @@ async function commitMove(loan, mode, r, orig) {
   if (orig.hasEnd) next.end = toInput(new Date(r.e));
   if (next.vehicleId === prev.vehicleId && next.start === prev.start && next.end === prev.end) { render(); return; }
   if (conflicts(next).length && !(await ask('同じ車で時間が重複します。この位置にしますか？'))) { render(); return; }
+  if (next.vehicleId !== prev.vehicleId && purposeIssue(next) && !(await ask(purposeIssue(next) + '。この車に移しますか？'))) { render(); return; }
   Object.assign(loan, { vehicleId: next.vehicleId, start: next.start, end: next.end });
   save(); render();
   notify(`${vehicle(loan.vehicleId)?.name || ''} ${fmt(loan.start)}〜${loan.end ? fmt(loan.end) : '未定'} に変更しました`,
@@ -585,7 +595,7 @@ function ledger() {
   }).sort(sorter).map((l) => {
     const v = vehicle(l.vehicleId), st = status(l), c = conflicts(l), ins = inspectionIssue(l);
     return `<tr class="click ${c.length ? 'conflict' : ''}" data-edit="${l.id}">
-      <td data-label="状態">${badge(st)}${c.length ? ' <span class="red">時間が重複</span>' : ''}${ins ? ' <span class="red">車検</span>' : ''}</td>
+      <td data-label="状態">${badge(st)}${l.type === 'loan' && l.purpose === 'insurance' ? ' <span class="badge ins">保険</span>' : ''}${c.length ? ' <span class="red">時間が重複</span>' : ''}${ins ? ' <span class="red">車検</span>' : ''}${purposeIssue(l) ? ' <span class="red" title="' + esc(purposeIssue(l)) + '">登録区分に注意</span>' : ''}</td>
       <td data-label="車両"><b>${esc(v ? `${v.name} ${v.plate}` : l.vehicleId)}</b></td><td data-label="登録">${v ? catBadge(v.category) : ''}</td>
       <td data-label="お客様">${esc(l.customer)}</td><td data-label="担当">${esc(l.staff)}</td><td data-label="開始">${fmt(l.start)}</td>
       <td data-label="終了">${l.undecided || !l.end ? '<span class="muted">未定</span>' : fmt(l.end)}</td>
@@ -723,19 +733,21 @@ function openLoan(id, pre = {}) {
     end: pre.end || toInput(new Date(parse(startDefault).getTime() + 4 * HOUR)), undecided: false, returned: false, cancelled: false, note: '' };
   f.type.value = l.type; f.vehicleId.value = l.vehicleId; f.customer.value = l.customer; f.staff.value = l.staff;
   f.start.value = l.start; f.end.value = l.end; f.undecided.checked = !!l.undecided; f.returned.checked = !!l.returned;
-  f.cancelled.checked = !!l.cancelled; f.note.value = l.note;
+  f.cancelled.checked = !!l.cancelled; f.note.value = l.note; f.purpose.value = l.purpose || 'normal';
   syncLoanForm(); loanDlg.showModal();
 }
 function readLoan() {
   const f = loanForm.elements;
   return { ...(editingLoan || {}), type: f.type.value, vehicleId: f.vehicleId.value, customer: f.customer.value.trim(), staff: f.staff.value,
     start: f.start.value, end: f.undecided.checked ? '' : f.end.value, undecided: f.undecided.checked, returned: f.returned.checked,
-    cancelled: f.cancelled.checked, note: f.note.value.trim() };
+    cancelled: f.cancelled.checked, note: f.note.value.trim(), purpose: f.purpose.value };
 }
 function syncLoanForm() {
   const f = loanForm.elements;
   f.end.disabled = f.undecided.checked;
   const l = readLoan(), w = $('#loanWarn'), msgs = [];
+  $('#purposeRow').hidden = l.type !== 'loan';
+  const pi = purposeIssue(l); if (pi) msgs.push(pi);
   if (l.start) {
     const c = conflicts({ ...l, id: editingLoan?.id || '__new' });
     if (c.length) msgs.push('時間が重複: ' + c.map((o) => `${o.customer || status(o)} ${fmt(o.start)}〜${o.end && !o.undecided ? fmt(o.end) : '未定'}`).join(' / '));
@@ -769,6 +781,8 @@ loanForm.addEventListener('submit', async (e) => {
   if (!l.returned) delete l.returnedAt;
   const c = conflicts({ ...l, id: editingLoan?.id || '__new' });
   if (c.length && !(await ask('同じ車で時間が重複しています。それでも保存しますか？'))) return;
+  const pi = purposeIssue(l);
+  if (pi && !(await ask(pi + '。このまま保存しますか？'))) return;
   if (editingLoan) Object.assign(editingLoan, l);
   else db.loans.push({ ...l, id: 'L' + Date.now().toString(36) });
   save(); loanDlg.close(); render();
