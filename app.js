@@ -54,6 +54,13 @@ function seed() {
     L(20, 19, '森様', '佐藤', at(-1, 13), at(0, 12)),
     L(21, 20, '池田様', '鈴木', at(4, 9), at(4, 17)),
   ];
+  // 用件（なぜ貸し出しているか）とメモ
+  const info = {
+    1: ['車検'], 2: ['板金修理', '部品待ち'], 3: ['事故修理'], 4: ['点検・整備'], 5: ['修理', '返却連絡待ち'], 6: ['事故修理'], 7: ['点検・整備'],
+    8: ['納車・引取'], 9: ['車検'], 10: ['納車待ち'], 11: ['事故修理'], 12: ['点検・整備'], 13: ['車検'], 14: ['事故修理'], 15: ['事故修理'],
+    16: ['板金修理', '部品待ち（登録区分の注意の例）'], 17: ['点検・整備'], 18: ['車検'], 19: ['事故修理'], 20: ['点検・整備'], 21: ['車検'],
+  };
+  loans.forEach((l) => { const x = info[Number(l.id.slice(1))]; if (x) { l.reason = x[0]; l.note = x[1] || ''; } });
   return { settings: { prepHours: 1, dayStart: 8, dayEnd: 20 }, staff: ['佐藤', '鈴木', '田中'], vehicles, loans };
 }
 // 古い形式・壊れたデータでも動くように、足りない項目を補う
@@ -278,7 +285,7 @@ function dashboard() {
   const oilList = activeVehicles().map((v) => ({ v, o: oilInfo(v) })).filter((x) => x.o && x.o.level !== 'ok').sort((a, b) => a.o.daysLeft - b.o.daysLeft);
   const soon = activeVehicles().filter((v) => v.inspection && (new Date(v.inspection + 'T23:59:59') - now) / DAY <= 30)
     .sort((a, b) => a.inspection.localeCompare(b.inspection));
-  const row = (l, extra = '') => `<li class="click" data-edit="${l.id}">${badge(st(l))}<span class="grow"><b>${esc(vehicle(l.vehicleId)?.name)}</b> <span class="muted">${esc(l.customer)}</span></span><span class="muted">${extra}</span></li>`;
+  const row = (l, extra = '') => `<li class="click" data-edit="${l.id}">${badge(st(l))}<span class="grow"><b>${esc(vehicle(l.vehicleId)?.name)}</b> <span class="muted">${esc(l.customer)}</span>${l.reason ? ` <span class="why-tag">${esc(l.reason)}</span>` : ''}</span><span class="muted">${extra}</span></li>`;
   const empty = '<li class="muted">なし</li>';
   return `
   <div class="cards">
@@ -343,14 +350,15 @@ function hm(d) { return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function barItem(it, lanes, rs, re) {
   const { l, s, e, lane } = it;
   const st = status(l), open = l.undecided || !l.end;
-  const cls = ['bar', 's-' + SCLS[st], s < rs ? 'cl' : '', e > re ? 'cr' : '', l.returned ? 'lock' : ''].filter(Boolean).join(' ');
+  const why = (l.reason || '').trim();
+  const cls = ['bar', 's-' + SCLS[st], s < rs ? 'cl' : '', e > re ? 'cr' : '', l.returned ? 'lock' : '', why ? 'has-why' : ''].filter(Boolean).join(' ');
   const who = l.type === 'loan' ? (l.customer || '（名前なし）') : st;
   const sd = new Date(s), ed = new Date(e), same = ymd(sd) === ymd(ed);
   const md = (d) => `${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
   const tm = open ? `${md(sd)}〜未定` : same ? `${hm(sd)}〜${hm(ed)}` : `${md(sd)}〜${md(ed)}`;
-  const tip = `${st} ${l.customer || ''}\n${fmt(l.start)} → ${open ? '未定' : fmt(l.end)}`;
+  const tip = `${st} ${l.customer || ''}${why ? '（' + why + '）' : ''}\n${fmt(l.start)} → ${open ? '未定' : fmt(l.end)}${l.note ? '\n' + l.note : ''}`;
   const lanePos = `top:calc(7px + (100% - 14px) * ${lane} / ${lanes});height:calc((100% - 14px) / ${lanes} - ${lanes > 1 ? 2 : 0}px)`;
-  return `<div class="${cls}" data-id="${l.id}" ${l.returned ? 'data-lock="1"' : ''} tabindex="0" title="${esc(tip)}" style="${barPos(s, e, rs, re)};${lanePos}"><i class="h hl"></i><b>${SCODE[st]}</b><span class="t">${esc(who)}</span><span class="tm">${tm}</span>${open || l.returned ? '' : '<i class="h hr"></i>'}</div>`;
+  return `<div class="${cls}" data-id="${l.id}" ${l.returned ? 'data-lock="1"' : ''} tabindex="0" title="${esc(tip)}" style="${barPos(s, e, rs, re)};${lanePos}"><i class="h hl"></i><b>${SCODE[st]}</b><span class="t">${esc(who)}</span>${why ? `<span class="why">${esc(why)}</span>` : ''}<span class="tm">${tm}</span>${open || l.returned ? '' : '<i class="h hr"></i>'}</div>`;
 }
 function boardHtml(o) {
   const { rs, re } = o, vs = activeVehicles(ui.cat), now = Date.now();
@@ -680,7 +688,7 @@ async function commitMove(loan, mode, r, orig) {
 
 
 // ---------- 台帳 ----------
-const SORT_COLS = [['status', '状態'], ['vehicle', '車両'], ['cat', '登録'], ['customer', 'お客様'], ['staff', '担当'], ['start', '開始'], ['end', '終了'], ['note', 'メモ']];
+const SORT_COLS = [['status', '状態'], ['vehicle', '車両'], ['cat', '登録'], ['customer', 'お客様'], ['reason', '用件'], ['staff', '担当'], ['start', '開始'], ['end', '終了'], ['note', 'メモ']];
 const STATUS_ORDER = ['遅延', '返却未定', '貸出中', '予約', '社用', '使用不可', '返却済', '取消'];
 function sortKey(l, key) {
   const v = vehicle(l.vehicleId);
@@ -689,6 +697,7 @@ function sortKey(l, key) {
     case 'vehicle': return v ? `${v.name} ${v.plate}` : l.vehicleId;
     case 'cat': return v ? v.category : '';
     case 'customer': return l.customer || '';
+    case 'reason': return l.reason || '';
     case 'staff': return l.staff || '';
     case 'start': return l.start || '';
     case 'end': return l.undecided || !l.end ? '9999' : l.end;
@@ -709,13 +718,13 @@ function ledger() {
     if (ui.fstatus && st !== ui.fstatus) return false;
     if (ui.fveh && l.vehicleId !== ui.fveh) return false;
     const v = vehicle(l.vehicleId);
-    return !q || [l.customer, l.staff, l.note, v?.name, v?.plate, v?.id].join(' ').toLowerCase().includes(q);
+    return !q || [l.customer, l.reason, l.staff, l.note, v?.name, v?.plate, v?.id].join(' ').toLowerCase().includes(q);
   }).sort(sorter).map((l) => {
     const v = vehicle(l.vehicleId), st = status(l), c = conflicts(l), ins = inspectionIssue(l);
     return `<tr class="click ${c.length ? 'conflict' : ''}" data-edit="${l.id}">
       <td data-label="状態">${badge(st)}${l.type === 'loan' && l.purpose === 'insurance' ? ' <span class="badge ins">保険</span>' : ''}${c.length ? ' <span class="red">時間が重複</span>' : ''}${ins ? ' <span class="red">車検</span>' : ''}${purposeIssue(l) ? ' <span class="red" title="' + esc(purposeIssue(l)) + '">登録区分に注意</span>' : ''}</td>
       <td data-label="車両"><b>${esc(v ? `${v.name} ${v.plate}` : l.vehicleId)}</b></td><td data-label="登録">${v ? catBadge(v.category) : ''}</td>
-      <td data-label="お客様">${esc(l.customer)}</td><td data-label="担当">${esc(l.staff)}</td><td data-label="開始">${fmt(l.start)}</td>
+      <td data-label="お客様">${esc(l.customer)}</td><td data-label="用件">${esc(l.reason)}</td><td data-label="担当">${esc(l.staff)}</td><td data-label="開始">${fmt(l.start)}</td>
       <td data-label="終了">${l.undecided || !l.end ? '<span class="muted">未定</span>' : fmt(l.end)}</td>
       <td data-label="メモ" class="muted">${esc(l.note)}</td></tr>`;
   }).join('');
@@ -733,7 +742,7 @@ function ledger() {
   </div>
   <div class="card scroll cardwrap" style="padding:6px 10px"><table class="stack">
     <thead><tr>${SORT_COLS.map(([k, t]) => `<th class="sortable ${k === key ? 'sorted' : ''}" data-sort="${k}" tabindex="0" aria-sort="${k === key ? (dir === 1 ? 'ascending' : 'descending') : 'none'}">${t}${arrow(k)}</th>`).join('')}</tr></thead>
-    <tbody>${rows || '<tr><td colspan="8" class="muted">該当なし。右上の「＋ 新規貸出」から登録できます。</td></tr>'}</tbody></table></div>`;
+    <tbody>${rows || '<tr><td colspan="9" class="muted">該当なし。右上の「＋ 新規貸出」から登録できます。</td></tr>'}</tbody></table></div>`;
 }
 function bindLedger() {
   main.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { ui.view = b.dataset.go; ui.anim = true; render(); });
@@ -862,17 +871,31 @@ function openLoan(id, pre = {}) {
     end: pre.end || toInput(new Date(parse(startDefault).getTime() + 4 * HOUR)), undecided: false, returned: false, cancelled: false, note: '' };
   f.type.value = l.type; f.vehicleId.value = l.vehicleId; f.customer.value = l.customer; f.staff.value = l.staff;
   f.start.value = l.start; f.end.value = l.end; f.undecided.checked = !!l.undecided; f.returned.checked = !!l.returned;
-  f.cancelled.checked = !!l.cancelled; f.note.value = l.note; f.purpose.value = l.purpose || 'normal';
+  f.cancelled.checked = !!l.cancelled; f.note.value = l.note; f.purpose.value = l.purpose || 'normal'; f.reason.value = l.reason || '';
   syncLoanForm(); loanDlg.showModal();
 }
 function readLoan() {
   const f = loanForm.elements;
   return { ...(editingLoan || {}), type: f.type.value, vehicleId: f.vehicleId.value, customer: f.customer.value.trim(), staff: f.staff.value,
     start: f.start.value, end: f.undecided.checked ? '' : f.end.value, undecided: f.undecided.checked, returned: f.returned.checked,
-    cancelled: f.cancelled.checked, note: f.note.value.trim(), purpose: f.purpose.value };
+    cancelled: f.cancelled.checked, note: f.note.value.trim(), purpose: f.purpose.value, reason: f.reason.value.trim() };
+}
+const REASONS = {
+  loan: ['車検', '点検・整備', '板金修理', '事故修理', '納車待ち', 'レンタル'],
+  corp: ['納車・引取', '試乗・展示', '配送', 'その他'],
+  ng: ['点検・整備', '修理', '車検', 'その他'],
+};
+function renderReasonChips() {
+  const f = loanForm.elements;
+  $('#reasonChips').innerHTML = (REASONS[f.type.value] || REASONS.loan)
+    .map((r) => `<button type="button" class="chip ${f.reason.value.trim() === r ? 'on' : ''}" data-reason="${esc(r)}">${esc(r)}</button>`).join('');
 }
 function syncLoanForm() {
   const f = loanForm.elements;
+  // 新規の貸出は用件を必須にする（なぜ出しているかを残すため）。用件が空の古いデータは任意のまま
+  f.reason.required = f.type.value === 'loan' && (!editingLoan || !!editingLoan.reason);
+  f.reason.placeholder = f.type.value === 'loan' ? '例：車検、板金修理、事故修理…' : f.type.value === 'corp' ? '例：納車の引き取り' : '例：点検整備';
+  renderReasonChips();
   f.end.disabled = f.undecided.checked;
   const l = readLoan(), w = $('#loanWarn'), msgs = [];
   $('#purposeRow').hidden = l.type !== 'loan';
@@ -889,6 +912,12 @@ function syncLoanForm() {
 }
 loanForm.addEventListener('input', syncLoanForm);
 loanForm.addEventListener('change', syncLoanForm);
+$('#reasonChips').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-reason]'); if (!b) return;
+  const f = loanForm.elements;
+  f.reason.value = f.reason.value.trim() === b.dataset.reason ? '' : b.dataset.reason; // 同じ候補をもう一度押すと解除
+  syncLoanForm();
+});
 $('#presets').addEventListener('click', (e) => {
   const b = e.target.closest('[data-preset]'); if (!b) return;
   const f = loanForm.elements;
@@ -965,7 +994,7 @@ function renderVehHistory() {
   $('#vehHistList').innerHTML = all.map((l) => {
     const st = status(l);
     const t = l.type === 'loan' ? esc(l.customer || '（名前なし）') : st;
-    return `<li class="click" data-hist="${l.id}" tabindex="0">${badge(st)}<span class="grow"><b>${t}</b> <span class="muted">${esc(l.staff)}</span></span><span class="muted" style="white-space:normal;text-align:right">${fmt(l.start)} → ${l.end && !l.undecided ? fmt(l.end) : '未定'}</span></li>`;
+    return `<li class="click" data-hist="${l.id}" tabindex="0">${badge(st)}<span class="grow"><b>${t}</b>${l.reason ? ` <span class="why-tag">${esc(l.reason)}</span>` : ''} <span class="muted">${esc(l.staff)}</span></span><span class="muted" style="white-space:normal;text-align:right">${fmt(l.start)} → ${l.end && !l.undecided ? fmt(l.end) : '未定'}</span></li>`;
   }).join('') || '<li class="empty-note">なし</li>';
 }
 $('#vehHistList').addEventListener('click', (e) => {

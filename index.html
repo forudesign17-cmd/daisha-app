@@ -49,7 +49,11 @@
       <label>開始 <input type="datetime-local" name="start" required></label>
       <label>終了（返却予定） <input type="datetime-local" name="end"></label>
     </div>
-    <label id="purposeRow" style="margin-top:12px">用途（保険の扱い）
+    <label id="reasonRow" style="margin-top:12px">用件（なぜ貸し出すか）
+      <input name="reason" maxlength="30" placeholder="例：車検、板金修理、事故修理…" autocomplete="off">
+    </label>
+    <div class="chips" id="reasonChips" style="margin-top:8px"></div>
+    <label id="purposeRow" style="margin-top:12px">保険の扱い
       <select name="purpose">
         <option value="normal">通常の代車（無償の貸出）</option>
         <option value="insurance">保険対応（事故・保険修理など）</option>
