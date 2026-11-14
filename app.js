@@ -195,35 +195,47 @@ function slotInfo(v, t0, t1) {
   return null;
 }
 
+// ---------- ボード共通（連続する占有を1本の棒にして描画） ----------
+function barHtml(info, n, rs, re) {
+  const l = info.l;
+  if (info.kind === 'prep') return '<div class="bar s-prep" title="準備時間">準備</div>';
+  const st = status(l), [s, e] = span(l);
+  const cls = `bar s-${SCLS[st]}${s < rs ? ' cl' : ''}${e > re ? ' cr' : ''}`;
+  const who = l.type === 'loan' ? (l.customer || '') : st;
+  const tip = `${st} ${l.customer || ''}\n${fmt(l.start)} → ${l.end && !l.undecided ? fmt(l.end) : '未定'}`;
+  const label = n >= 2 ? `<b>${SCODE[st]}</b><span class="t">${esc(who)}</span>` : `<b>${SCODE[st]}</b>`;
+  return `<div class="${cls}" title="${esc(tip)}">${label}</div>`;
+}
+function boardRow(v, slots, rs, re) {
+  const cells = slots.map((s) => {
+    const info = slotInfo(v, s.t0, s.t1);
+    return { s, info, key: info ? info.l.id + info.kind : '' };
+  });
+  let html = '';
+  for (let i = 0; i < cells.length;) {
+    const c = cells[i]; let j = i + 1;
+    while (j < cells.length && c.key && cells[j].key === c.key) j++;
+    const n = j - i;
+    if (!c.info) html += `<td class="cell empty${c.s.cls}" data-new="${esc(v.id)}" data-t="${c.s.newAt}"><span class="plus">＋</span></td>`;
+    else html += `<td class="cell has${c.s.cls.includes(' dl') ? ' dl' : ''}" colspan="${n}" data-edit="${c.info.l.id}">${barHtml(c.info, n, rs, re)}</td>`;
+    i = j;
+  }
+  return `<tr>${vehCell(v)}${html}</tr>`;
+}
+
 // ---------- 日別 ----------
 function dayView() {
   const { dayStart: h0, dayEnd: h1 } = db.settings;
   const base = dayStart(ui.day).getTime();
   const hours = []; for (let h = h0; h < h1; h++) hours.push(h);
   const nowT = Date.now();
-  const rows = activeVehicles(ui.cat).map((v) => {
-    const cells = hours.map((h) => {
-      const t0 = base + h * HOUR;
-      const info = slotInfo(v, t0, t0 + HOUR);
-      return { h, key: info ? info.l.id + info.kind : '', info };
-    });
-    let html = '';
-    for (let i = 0; i < cells.length;) {
-      const c = cells[i]; let j = i + 1;
-      while (j < cells.length && c.key && cells[j].key === c.key) j++;
-      const n = j - i;
-      const nowCls = nowT >= base + c.h * HOUR && nowT < base + (c.h + 1) * HOUR ? ' now' : '';
-      if (!c.info) html += `<td class="cell empty${nowCls}" data-new="${esc(v.id)}" data-t="${ui.day}T${pad(c.h)}:00"></td>`;
-      else if (c.info.kind === 'prep') html += `<td class="cell s-prep" colspan="${n}" data-edit="${c.info.l.id}" title="準備時間">準</td>`;
-      else {
-        const st = status(c.info.l);
-        const tip = `${st} ${c.info.l.customer}\n${fmt(c.info.l.start)} → ${c.info.l.end ? fmt(c.info.l.end) : '未定'}`;
-        html += `<td class="cell s-${SCLS[st]}" colspan="${n}" data-edit="${c.info.l.id}" title="${esc(tip)}">${SCODE[st]} ${n > 1 ? esc(c.info.l.customer) : ''}</td>`;
-      }
-      i = j;
-    }
-    return `<tr>${vehCell(v)}${html}</tr>`;
-  }).join('');
+  const slots = hours.map((h) => ({
+    t0: base + h * HOUR, t1: base + (h + 1) * HOUR,
+    cls: nowT >= base + h * HOUR && nowT < base + (h + 1) * HOUR ? ' now' : '',
+    newAt: `${ui.day}T${pad(h)}:00`,
+  }));
+  const rs = base + h0 * HOUR, re = base + h1 * HOUR;
+  const rows = activeVehicles(ui.cat).map((v) => boardRow(v, slots, rs, re)).join('');
   const nowH = ymd(new Date()) === ui.day ? new Date().getHours() : -1;
   const d = dayStart(ui.day);
   return `
@@ -236,7 +248,7 @@ function dayView() {
     <b>${d.getMonth() + 1}月${d.getDate()}日（${WD[d.getDay()]}）</b>
     <span class="spacer"></span>${catChips()}
   </div>
-  <div class="board"><table style="min-width:calc(var(--vw) + ${hours.length * 46}px)">
+  <div class="board"><table style="min-width:calc(var(--vw) + ${hours.length * 56}px)">
     <thead><tr><th class="veh">車両</th>${hours.map((h) => `<th class="${h === nowH ? 'today' : ''}">${h}:00</th>`).join('')}</tr></thead>
     <tbody>${rows}</tbody></table></div>${legend()}`;
 }
@@ -246,20 +258,13 @@ function periodView() {
   const base = dayStart(ui.pStart).getTime();
   const days = Array.from({ length: ui.pDays }, (_, i) => new Date(base + i * DAY));
   const today = ymd(new Date());
-  const rows = activeVehicles(ui.cat).map((v) => {
-    const tds = days.map((d) => {
-      const t = d.getTime();
-      return [0, 12].map((hh) => {
-        const info = slotInfo(v, t + hh * HOUR, t + (hh + 12) * HOUR);
-        const wk = d.getDay() === 0 || d.getDay() === 6 ? ' wk' : '';
-        if (!info) return `<td class="cell empty${wk}" data-new="${esc(v.id)}" data-t="${ymd(d)}T${hh === 0 ? '09' : '13'}:00"></td>`;
-        if (info.kind === 'prep') return `<td class="cell s-prep" data-edit="${info.l.id}" title="準備時間"></td>`;
-        const st = status(info.l);
-        return `<td class="cell s-${SCLS[st]}" data-edit="${info.l.id}" title="${esc(`${st} ${info.l.customer}\n${fmt(info.l.start)} → ${info.l.end ? fmt(info.l.end) : '未定'}`)}">${SCODE[st]}</td>`;
-      }).join('');
-    }).join('');
-    return `<tr>${vehCell(v)}${tds}</tr>`;
-  }).join('');
+  const slots = days.flatMap((d) => [0, 12].map((hh) => ({
+    t0: d.getTime() + hh * HOUR, t1: d.getTime() + (hh + 12) * HOUR,
+    cls: `${ymd(d) === today ? ' tcol' : ''}${d.getDay() === 0 || d.getDay() === 6 ? ' wk' : ''}${hh === 0 ? ' dl' : ''}`,
+    newAt: `${ymd(d)}T${hh === 0 ? '09' : '13'}:00`,
+  })));
+  const rs = base, re = base + ui.pDays * DAY;
+  const rows = activeVehicles(ui.cat).map((v) => boardRow(v, slots, rs, re)).join('');
   return `
   <div class="toolbar">
     <h2 style="margin:0">期間ボード</h2>
@@ -271,8 +276,8 @@ function periodView() {
     <span class="hint">各日 左=午前 / 右=午後</span>
     <span class="spacer"></span>${catChips()}
   </div>
-  <div class="board"><table style="min-width:calc(var(--vw) + ${ui.pDays * 60}px)">
-    <thead><tr><th class="veh" rowspan="1">車両</th>${days.map((d) => `<th colspan="2" class="${ymd(d) === today ? 'today' : ''}${d.getDay() === 0 || d.getDay() === 6 ? ' wk' : ''}">${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})</th>`).join('')}</tr></thead>
+  <div class="board"><table style="min-width:calc(var(--vw) + ${ui.pDays * 76}px)">
+    <thead><tr><th class="veh" rowspan="1">車両</th>${days.map((d) => `<th colspan="2" class="dl ${ymd(d) === today ? 'today' : ''}${d.getDay() === 0 || d.getDay() === 6 ? ' wk' : ''}">${d.getMonth() + 1}/${d.getDate()}<small>${WD[d.getDay()]}</small></th>`).join('')}</tr></thead>
     <tbody>${rows}</tbody></table></div>${legend()}`;
 }
 
