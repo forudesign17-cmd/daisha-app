@@ -220,12 +220,7 @@ function render() {
   }
   const after = { day: bindBoard, period: bindBoard, ledger: bindLedger, search: bindSearch, master: bindMaster, dashboard: bindLedger }[ui.view];
   if (after) after();
-  if (ui.anim) { // 画面切り替え・日付移動のときだけアニメーション（自動更新では動かさない）
-    main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter');
-    clearTimeout(ui.enterT); ui.enterT = setTimeout(() => main.classList.remove('enter'), 1100); // 自動更新のたびに動かさない
-    countUp();
-    ui.anim = false;
-  }
+  ui.anim = false; // 画面切り替えの演出は行わない（動きは「持ち上げ」と保存時の着地に絞る）
   if (ui.flash) flashItem(ui.flash);
   ui.flash = null;
 }
@@ -522,7 +517,7 @@ function initDrag() {
     let anchor = snapT(timeAt(track, sx)), grab = timeAt(track, sx);
     let moved = false, ghost = null, result = null, curTrack = track, armed = !touch, edgeTimer = null;
     // 長押しの途中経過を見せる（iPhone は振動が使えないので、見た目で「押している」「持ち上がった」を伝える）
-    let ring = null;
+    let ring = null, slot = null;
     const clearPress = () => { if (bar) bar.classList.remove('pressing'); if (ring) { ring.remove(); ring = null; } };
     const spawn = (cls) => {
       const r = track.getBoundingClientRect(), el = document.createElement('i');
@@ -539,7 +534,6 @@ function initDrag() {
       clearTimeout(decayT); decayT = setTimeout(() => { rot = 0; bar.style.setProperty('--rot', '0deg'); }, 110);
     };
     const apply = (x, y) => {
-      tilt(x);
       const dt = timeAt(track, x) - grab;
       if (mode === 'create') {
         let a = anchor, b = snapT(timeAt(track, x));
@@ -561,7 +555,13 @@ function initDrag() {
     };
     const begin = () => {
       moved = true; dragging = true; document.body.classList.add('dragging');
-      if (bar) bar.classList.add('drag');
+      if (bar) {
+        // 元の位置に点線の「抜け跡」を残し、棒を浮かせる（持ち上げた感じを出す）
+        slot = document.createElement('div'); slot.className = 'bar slot'; slot.style.cssText = bar.style.cssText;
+        bar.parentNode.insertBefore(slot, bar);
+        if (touch) bar.classList.add('touch'); // 指で隠れないよう、少し上に浮かせる
+        bar.classList.add('drag');
+      }
       else { ghost = document.createElement('div'); ghost.className = 'bar ghost'; track.appendChild(ghost); }
       edgeTimer = setInterval(() => { // 端に近づいたらボードを自動スクロール
         const r = bd.getBoundingClientRect(), vw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--vw')) || 0;
@@ -569,7 +569,11 @@ function initDrag() {
         apply(lx, ly);
       }, 30);
     };
-    const dispose = () => { clearInterval(edgeTimer); clearTimeout(decayT); touchDrag = false; document.body.classList.remove('dragging'); clearPress(); };
+    const dispose = () => {
+      clearInterval(edgeTimer); clearTimeout(decayT); touchDrag = false; document.body.classList.remove('dragging'); clearPress();
+      if (slot) { slot.remove(); slot = null; }
+      if (bar) bar.classList.remove('touch');
+    };
     return {
       arm() { // タッチ: 長押し成立
         armed = true; sx = lx; sy = ly; anchor = snapT(timeAt(track, sx)); grab = timeAt(track, sx);
