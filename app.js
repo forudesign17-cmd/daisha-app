@@ -240,6 +240,7 @@ function catChips() {
 }
 
 function render() {
+  hideTip();
   const h = ui.tv ? 'tv' : ui.view;
   if (location.hash.slice(1) !== h) history.replaceState(null, '', '#' + h);
   document.body.classList.toggle('tv', !!ui.tv);
@@ -387,7 +388,7 @@ function barItem(it, lanes, rs, re) {
   const tm = open ? `${md(sd)}〜未定` : same ? `${hm(sd)}〜${hm(ed)}` : `${md(sd)}〜${md(ed)}`;
   const tip = `${st} ${l.customer || ''}${why ? '（' + why + '）' : ''}\n${fmt(l.start)} → ${open ? '未定' : fmt(l.end)}${l.note ? '\n' + l.note : ''}`;
   const lanePos = `top:calc(7px + (100% - 14px) * ${lane} / ${lanes});height:calc((100% - 14px) / ${lanes} - ${lanes > 1 ? 2 : 0}px)`;
-  return `<div class="${cls}" data-id="${l.id}" ${l.returned ? 'data-lock="1"' : ''} tabindex="0" title="${esc(tip)}" style="${barPos(s, e, rs, re)};${lanePos}"><i class="h hl"></i><b>${SCODE[st]}</b><span class="t">${esc(who)}</span>${why ? `<span class="why">${esc(why)}</span>` : ''}<span class="tm">${tm}</span>${open || l.returned ? '' : '<i class="h hr"></i>'}</div>`;
+  return `<div class="${cls}" data-id="${l.id}" ${l.returned ? 'data-lock="1"' : ''} tabindex="0" aria-label="${esc(tip.replace(/\n/g, ' '))}" style="${barPos(s, e, rs, re)};${lanePos}"><i class="h hl"></i><b>${SCODE[st]}</b><span class="t">${esc(who)}</span>${why ? `<span class="why">${esc(why)}</span>` : ''}<span class="tm">${tm}</span>${open || l.returned ? '' : '<i class="h hr"></i>'}</div>`;
 }
 function boardHtml(o) {
   const { rs, re } = o, vs = activeVehicles(ui.cat), now = Date.now();
@@ -516,6 +517,47 @@ function placeBar(el, s, e) {
   el.style.width = Math.max(0, pct(ce, rs, re) - pct(cs, rs, re)) + '%';
   el.classList.toggle('cl', s < rs); el.classList.toggle('cr', e > re);
 }
+// ---------- マウスを重ねたときの詳細カード ----------
+let tipEl = null, tipTimer = null, tipFor = null;
+function durText(ms) {
+  const m = Math.max(0, Math.round(ms / 60000)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60;
+  return (d ? d + '日' : '') + (h ? h + '時間' : '') + (mi ? mi + '分' : '') || '0分';
+}
+function tipHtml(l) {
+  const st = status(l), v = vehicle(l.vehicleId), open = l.undecided || !l.end;
+  const [s, e] = span(l);
+  const who = l.type === 'loan' ? (l.customer || '（名前なし）') : st;
+  const rows = [];
+  rows.push(['車両', v ? `${esc(v.name)} <span class="muted">${esc(v.plate)}</span> ${catBadge(v.category)}` : '（不明）']);
+  if (open) rows.push(['期間', `${esc(fmt(l.start))} 〜 <b>未定</b><br><span class="muted">${esc(durText(Date.now() - s))}経過</span>`]);
+  else rows.push(['期間', `${esc(fmt(l.start))} 〜 ${esc(fmt(l.end))}<br><span class="muted">${esc(durText(e - s))}</span>`]);
+  if (l.returned) rows.push(['返却', esc(l.returnedAt ? fmt(l.returnedAt) : '済')]);
+  if (l.staff) rows.push(['担当', esc(l.staff)]);
+  if (l.type === 'loan') rows.push(['保険の扱い', l.purpose === 'insurance' ? '<span class="badge ins">保険対応</span>' : '通常（無償の貸出）']);
+  if (l.note) rows.push(['メモ', esc(l.note)]);
+  const warn = [];
+  if (conflicts(l).length) warn.push('同じ車で時間が重複しています');
+  const pi = purposeIssue(l); if (pi) warn.push(pi);
+  const ii = inspectionIssue(l); if (ii) warn.push(ii);
+  return `<div class="tip-h">${badge(st)}<b class="tip-who">${esc(who)}</b>${l.reason ? `<span class="why-tag">${esc(l.reason)}</span>` : ''}</div>
+    <dl class="tip-b">${rows.map(([k, val]) => `<dt>${k}</dt><dd>${val}</dd>`).join('')}</dl>
+    ${warn.map((w) => `<div class="tip-w">⚠ ${esc(w)}</div>`).join('')}
+    <div class="tip-f">クリックで編集 ／ ドラッグで移動</div>`;
+}
+function showTip(bar, clientX) {
+  const l = db.loans.find((x) => x.id === bar.dataset.id);
+  if (!l || !document.body.contains(bar)) return;
+  if (!tipEl) { tipEl = document.createElement('div'); tipEl.id = 'tip'; tipEl.setAttribute('role', 'tooltip'); document.body.appendChild(tipEl); }
+  tipEl.innerHTML = tipHtml(l); tipEl.hidden = false;
+  const r = bar.getBoundingClientRect(), tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+  const x = Math.min(Math.max(8, clientX - 24), window.innerWidth - tw - 8);
+  let y = r.top - th - 10;
+  if (y < 8) y = Math.min(r.bottom + 10, window.innerHeight - th - 8); // 上に入らなければ下に出す
+  tipEl.style.left = x + 'px'; tipEl.style.top = y + 'px';
+}
+function hideTip() { clearTimeout(tipTimer); tipFor = null; if (tipEl) tipEl.hidden = true; }
+window.addEventListener('scroll', hideTip, { passive: true });
+
 // 触覚フィードバック: Android は vibrate、iPhone(iOS 17.4+) は switch 型チェックボックスのトリックを試す（効かなくても動作に影響なし）
 let hapticLabel = null;
 function haptic() {
@@ -533,6 +575,22 @@ function haptic() {
 }
 function initDrag() {
   const bd = $('.board'); if (!bd) return;
+  // マウスを重ねたら詳細カード（タッチでは出さない）
+  bd.addEventListener('pointerover', (e) => {
+    if (e.pointerType !== 'mouse' || dragging) return;
+    const bar = e.target.closest('.bar[data-id]');
+    if (!bar || bar === tipFor) return;
+    hideTip(); tipFor = bar;
+    const x = e.clientX;
+    tipTimer = setTimeout(() => showTip(bar, x), 130);
+  });
+  bd.addEventListener('pointerout', (e) => {
+    const bar = e.target.closest('.bar[data-id]');
+    if (!bar || bar.contains(e.relatedTarget)) return;
+    hideTip();
+  });
+  bd.addEventListener('pointerdown', hideTip, true);
+  bd.addEventListener('scroll', hideTip);
   bd.addEventListener('click', (e) => {
     if (suppressClick) return;
     const bar = e.target.closest('.bar');
