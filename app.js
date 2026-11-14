@@ -81,17 +81,23 @@ function load() {
 function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* 保存不可の環境ではメモリのみ */ } }
 
 // alert/confirm の代わり（アーティファクトのビューアでは使えないため）
-function notify(msg, undo) {
+// notify(本文, 元に戻す処理, { title: 見出し })。元に戻す処理があるときは「元に戻す」ボタンを出し、10秒表示する
+function notify(msg, undo, opts = {}) {
   const t = document.getElementById('toast');
-  t.textContent = msg + ' ';
+  t.textContent = '';
+  t.classList.toggle('rich', !!opts.title);
+  const body = document.createElement('div'); body.className = 'tbody';
+  if (opts.title) { const h = document.createElement('div'); h.className = 'tt'; h.textContent = '✓ ' + opts.title; body.appendChild(h); }
+  const m = document.createElement('div'); m.className = 'tmsg'; m.textContent = msg; body.appendChild(m);
+  t.appendChild(body);
   if (undo) {
     const b = document.createElement('button');
-    b.className = 'toast-btn'; b.textContent = '元に戻す';
-    b.onclick = () => { undo(); t.hidden = true; };
+    b.className = 'toast-btn'; b.type = 'button'; b.textContent = '元に戻す';
+    b.onclick = () => { clearTimeout(notify.t); t.hidden = true; undo(); };
     t.appendChild(b);
   }
   t.hidden = false;
-  clearTimeout(notify.t); notify.t = setTimeout(() => { t.hidden = true; }, undo ? 8000 : 3500);
+  clearTimeout(notify.t); notify.t = setTimeout(() => { t.hidden = true; }, undo ? 10000 : 3500);
 }
 function ask(msg) {
   return new Promise((res) => {
@@ -952,7 +958,17 @@ $('#presets').addEventListener('click', (e) => {
   f.undecided.checked = false; f.end.value = toInput(end); syncLoanForm();
 });
 $('#loanCancel').onclick = () => loanDlg.close();
-$('#loanDelete').onclick = async () => { if (await ask('この貸出を削除します（取消にする場合は「取消」にチェック）。よろしいですか？')) { db.loans = db.loans.filter((l) => l !== editingLoan); save(); loanDlg.close(); render(); } };
+$('#loanDelete').onclick = async () => {
+  if (!(await ask('この貸出を削除します（取消にする場合は「取消」にチェック）。よろしいですか？'))) return;
+  const gone = editingLoan, at = db.loans.indexOf(gone);
+  db.loans = db.loans.filter((l) => l !== gone); save(); loanDlg.close(); render();
+  notify(loanSummary(gone), () => { db.loans.splice(Math.min(at, db.loans.length), 0, gone); ui.flash = gone.id; save(); render(); notify('削除を取り消しました'); }, { title: '削除しました' });
+};
+// 通知用の一行（お客様・車・日時）
+function loanSummary(l) {
+  const v = vehicle(l.vehicleId);
+  return `${l.type === 'loan' ? (l.customer || '（名前なし）') : status(l)}${l.reason ? '（' + l.reason + '）' : ''} ／ ${v ? v.name : ''} ／ ${fmt(l.start)}〜${l.end && !l.undecided ? fmt(l.end) : '未定'}`;
+}
 loanForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const l = readLoan();
@@ -964,9 +980,20 @@ loanForm.addEventListener('submit', async (e) => {
   if (c.length && !(await ask('同じ車で時間が重複しています。それでも保存しますか？'))) return;
   const pi = purposeIssue(l);
   if (pi && !(await ask(pi + '。このまま保存しますか？'))) return;
-  if (editingLoan) { Object.assign(editingLoan, l); if (!l.returned) delete editingLoan.returnedAt; ui.flash = editingLoan.id; }
-  else { const nid = 'L' + Date.now().toString(36); db.loans.push({ ...l, id: nid }); ui.flash = nid; }
+  let undo, title;
+  if (editingLoan) {
+    const target = editingLoan, before = JSON.parse(JSON.stringify(target));
+    Object.assign(target, l); if (!l.returned) delete target.returnedAt; ui.flash = target.id;
+    title = '更新しました';
+    undo = () => { Object.keys(target).forEach((k) => delete target[k]); Object.assign(target, before); ui.flash = target.id; save(); render(); notify('更新を取り消しました'); };
+  } else {
+    const nid = 'L' + Date.now().toString(36); db.loans.push({ ...l, id: nid }); ui.flash = nid;
+    title = '登録しました';
+    undo = () => { db.loans = db.loans.filter((x) => x.id !== nid); save(); render(); notify('登録を取り消しました'); };
+  }
+  const saved = editingLoan || db.loans[db.loans.length - 1];
   save(); loanDlg.close(); render();
+  notify(loanSummary(saved), undo, { title });
 });
 
 // ---------- 車両ダイアログ ----------
