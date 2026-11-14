@@ -523,7 +523,7 @@ function durText(ms) {
   const m = Math.max(0, Math.round(ms / 60000)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60;
   return (d ? d + '日' : '') + (h ? h + '時間' : '') + (mi ? mi + '分' : '') || '0分';
 }
-function tipHtml(l) {
+function tipHtml(l, isBar = true) {
   const st = status(l), v = vehicle(l.vehicleId), open = l.undecided || !l.end;
   const [s, e] = span(l);
   const who = l.type === 'loan' ? (l.customer || '（名前なし）') : st;
@@ -542,13 +542,15 @@ function tipHtml(l) {
   return `<div class="tip-h">${badge(st)}<b class="tip-who">${esc(who)}</b>${l.reason ? `<span class="why-tag">${esc(l.reason)}</span>` : ''}</div>
     <dl class="tip-b">${rows.map(([k, val]) => `<dt>${k}</dt><dd>${val}</dd>`).join('')}</dl>
     ${warn.map((w) => `<div class="tip-w">⚠ ${esc(w)}</div>`).join('')}
-    <div class="tip-f">クリックで編集 ／ ドラッグで移動</div>`;
+    <div class="tip-f">${isBar ? 'クリックで編集 ／ ドラッグで移動' : 'クリックで編集'}</div>`;
 }
+const tipTarget = (el) => el.closest('.bar[data-id], [data-edit]'); // 棒 / 台帳の行 / ダッシュボードの貸出一覧
+const tipLoanId = (el) => el.dataset.id || el.dataset.edit;
 function showTip(bar, clientX) {
-  const l = db.loans.find((x) => x.id === bar.dataset.id);
+  const l = db.loans.find((x) => x.id === tipLoanId(bar));
   if (!l || !document.body.contains(bar)) return;
   if (!tipEl) { tipEl = document.createElement('div'); tipEl.id = 'tip'; tipEl.setAttribute('role', 'tooltip'); document.body.appendChild(tipEl); }
-  tipEl.innerHTML = tipHtml(l); tipEl.hidden = false;
+  tipEl.innerHTML = tipHtml(l, bar.classList.contains('bar')); tipEl.hidden = false;
   const r = bar.getBoundingClientRect(), tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
   const x = Math.min(Math.max(8, clientX - 24), window.innerWidth - tw - 8);
   let y = r.top - th - 10;
@@ -557,6 +559,21 @@ function showTip(bar, clientX) {
 }
 function hideTip() { clearTimeout(tipTimer); tipFor = null; if (tipEl) tipEl.hidden = true; }
 window.addEventListener('scroll', hideTip, { passive: true });
+main.addEventListener('scroll', hideTip, true);
+main.addEventListener('pointerdown', hideTip, true);
+main.addEventListener('pointerover', (e) => {
+  if (e.pointerType !== 'mouse' || dragging) return;
+  const el = tipTarget(e.target);
+  if (!el || el === tipFor) return;
+  hideTip(); tipFor = el;
+  const x = e.clientX;
+  tipTimer = setTimeout(() => showTip(el, x), 130);
+});
+main.addEventListener('pointerout', (e) => {
+  const el = tipTarget(e.target);
+  if (!el || el.contains(e.relatedTarget)) return;
+  hideTip();
+});
 
 // 触覚フィードバック: Android は vibrate、iPhone(iOS 17.4+) は switch 型チェックボックスのトリックを試す（効かなくても動作に影響なし）
 let hapticLabel = null;
@@ -575,22 +592,6 @@ function haptic() {
 }
 function initDrag() {
   const bd = $('.board'); if (!bd) return;
-  // マウスを重ねたら詳細カード（タッチでは出さない）
-  bd.addEventListener('pointerover', (e) => {
-    if (e.pointerType !== 'mouse' || dragging) return;
-    const bar = e.target.closest('.bar[data-id]');
-    if (!bar || bar === tipFor) return;
-    hideTip(); tipFor = bar;
-    const x = e.clientX;
-    tipTimer = setTimeout(() => showTip(bar, x), 130);
-  });
-  bd.addEventListener('pointerout', (e) => {
-    const bar = e.target.closest('.bar[data-id]');
-    if (!bar || bar.contains(e.relatedTarget)) return;
-    hideTip();
-  });
-  bd.addEventListener('pointerdown', hideTip, true);
-  bd.addEventListener('scroll', hideTip);
   bd.addEventListener('click', (e) => {
     if (suppressClick) return;
     const bar = e.target.closest('.bar');
