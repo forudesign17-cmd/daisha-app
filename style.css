@@ -191,6 +191,18 @@ ul.list li:last-child{border:0}
 ul.list li.click{cursor:pointer}
 ul.list .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #vehHistList{max-height:240px;overflow:auto}
+.badge.oil-over{background:var(--late);color:var(--late-t)}
+.badge.oil-soon{background:var(--tbd);color:var(--tbd-t)}
+ul.list li.oil{flex-wrap:wrap;row-gap:2px}
+ul.list li.oil .detail{flex:1 1 100%;font-size:12px}
+.oilrow{margin-top:3px}
+.oilrow .badge{font-size:10px;padding:1px 7px}
+.stat.warn-card{background:#fff4e5}
+.stat.warn-card .n{color:#8a5200}
+fieldset.oil{border:1px solid var(--line);border-radius:14px;margin:14px 0 10px;padding:10px 14px 12px}
+fieldset.oil legend{padding:0 6px;font-weight:600;font-size:13px}
+.oil-act{display:flex;align-items:flex-end}
+fieldset.oil .hint{margin-top:8px}
 .empty-note{color:var(--sub);padding:8px 0}
 
 /* ---- ダイアログ ---- */

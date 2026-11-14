@@ -72,6 +72,18 @@
       <label>車検期限 <input type="date" name="inspection"></label>
       <label class="inline"><input type="checkbox" name="active" checked> 使用中（オフで一覧から除外）</label>
     </div>
+    <fieldset class="oil">
+      <legend>オイル交換</legend>
+      <div class="grid2">
+        <label>前回の交換日 <input type="date" name="oilLastDate"></label>
+        <label>前回交換時の走行距離（km） <input type="number" name="oilLastKm" min="0" inputmode="numeric"></label>
+        <label>現在の走行距離（km） <input type="number" name="odo" min="0" inputmode="numeric"></label>
+        <label>交換の目安（月ごと） <input type="number" name="oilMonths" min="1" inputmode="numeric" value="6"></label>
+        <label>交換の目安（kmごと） <input type="number" name="oilKm" min="500" step="500" inputmode="numeric" value="5000"></label>
+        <div class="oil-act"><button type="button" class="btn tonal" id="oilDone">交換した（今日）</button></div>
+      </div>
+      <div id="oilStatus" class="hint"></div>
+    </fieldset>
     <label>メモ（保険・登録費用など） <textarea name="note" rows="3"></textarea></label>
     <section id="vehHist" hidden style="margin-top:18px">
       <h3>貸出履歴</h3>

@@ -14,9 +14,9 @@ function seed() {
     settings: { prepHours: 1, dayStart: 8, dayEnd: 20 },
     staff: ['佐藤', '鈴木', '田中'],
     vehicles: [
-      { id: 'V01', name: 'ミライース', plate: '品川 500 あ 12-34', category: '代車', inspection: date(200), active: true, note: '' },
-      { id: 'V02', name: 'タント', plate: '品川 580 い 56-78', category: '代車', inspection: date(20), active: true, note: '' },
-      { id: 'V03', name: 'フィット', plate: '品川 500 う 90-12', category: 'レンタカー', inspection: date(120), active: true, note: 'レンタカー保険加入' },
+      { id: 'V01', name: 'ミライース', plate: '品川 500 あ 12-34', category: '代車', inspection: date(200), active: true, note: '', oilLastDate: date(-170), oilLastKm: 42000, odo: 46800, oilMonths: 6, oilKm: 5000 },
+      { id: 'V02', name: 'タント', plate: '品川 580 い 56-78', category: '代車', inspection: date(20), active: true, note: '', oilLastDate: date(-60), oilLastKm: 31000, odo: 32500, oilMonths: 6, oilKm: 5000 },
+      { id: 'V03', name: 'フィット', plate: '品川 500 う 90-12', category: 'レンタカー', inspection: date(120), active: true, note: 'レンタカー保険加入', oilLastDate: date(-220), oilLastKm: 58000, odo: 61000, oilMonths: 6, oilKm: 5000 },
       { id: 'V04', name: 'アルト', plate: '品川 580 え 34-56', category: '代車', inspection: date(-3), active: true, note: '車検切れ（要更新）' },
     ],
     loans: [
@@ -116,6 +116,29 @@ function inspectionIssue(l) {
   const lim = new Date(v.inspection + 'T23:59:59').getTime();
   return span(l)[0] > lim || (!l.undecided && l.end && parse(l.end).getTime() > lim) ? `車検期限（${v.inspection}）を過ぎる期間を含みます` : '';
 }
+// ---- オイル交換 ----
+const hasNum = (x) => x !== '' && x != null && !Number.isNaN(Number(x));
+function oilInfo(v) {
+  if (!v || !v.oilLastDate) return null;
+  const due = new Date(v.oilLastDate + 'T00:00');
+  due.setMonth(due.getMonth() + (Number(v.oilMonths) || 6));
+  const daysLeft = Math.ceil((due - dayStart(ymd(new Date()))) / DAY);
+  const kmLeft = hasNum(v.odo) && hasNum(v.oilLastKm) ? Number(v.oilLastKm) + (Number(v.oilKm) || 5000) - Number(v.odo) : null;
+  const over = daysLeft < 0 || (kmLeft !== null && kmLeft <= 0);
+  const soon = !over && (daysLeft <= 30 || (kmLeft !== null && kmLeft <= 500));
+  return { due: ymd(due), daysLeft, kmLeft, level: over ? 'over' : soon ? 'soon' : 'ok' };
+}
+function oilText(o) {
+  if (!o) return '未登録';
+  const d = o.daysLeft < 0 ? `${-o.daysLeft}日超過` : `あと${o.daysLeft}日`;
+  const k = o.kmLeft === null ? '' : o.kmLeft <= 0 ? ` ／ ${-o.kmLeft}km超過` : ` ／ あと${o.kmLeft}km`;
+  return `${o.due}まで（${d}${k}）`;
+}
+function oilBadge(v) {
+  const o = oilInfo(v);
+  if (!o || o.level === 'ok') return '';
+  return `<span class="badge oil-${o.level}" title="${esc(oilText(o))}">オイル${o.level === 'over' ? '超過' : '間近'}</span>`;
+}
 function activeVehicles(cat = '') { return db.vehicles.filter((v) => v.active !== false && (!cat || v.category === cat)); }
 function loansOf(vid) { return db.loans.filter((l) => l.vehicleId === vid && !l.cancelled); }
 
@@ -169,6 +192,7 @@ function dashboard() {
   const late = live.filter((l) => st(l) === '遅延');
   const todayOut = live.filter((l) => l.type === 'loan' && l.start.slice(0, 10) === todayS);
   const todayIn = live.filter((l) => l.type === 'loan' && l.end && l.end.slice(0, 10) === todayS);
+  const oilList = activeVehicles().map((v) => ({ v, o: oilInfo(v) })).filter((x) => x.o && x.o.level !== 'ok').sort((a, b) => a.o.daysLeft - b.o.daysLeft);
   const soon = activeVehicles().filter((v) => v.inspection && (new Date(v.inspection + 'T23:59:59') - now) / DAY <= 30)
     .sort((a, b) => a.inspection.localeCompare(b.inspection));
   const row = (l, extra = '') => `<li class="click" data-edit="${l.id}">${badge(st(l))}<span class="grow"><b>${esc(vehicle(l.vehicleId)?.name)}</b> <span class="muted">${esc(l.customer)}</span></span><span class="muted">${extra}</span></li>`;
@@ -180,6 +204,7 @@ function dashboard() {
     <div class="card stat ${late.length ? 'alert' : ''}"><div class="n">${late.length}</div><div class="l">遅延</div></div>
     <div class="card stat"><div class="n">${tbd.length}</div><div class="l">返却未定</div></div>
     <div class="card stat"><div class="n">${cnt('予約')}</div><div class="l">予約</div></div>
+    <div class="card stat ${oilList.length ? 'warn-card' : ''}"><div class="n">${oilList.length}</div><div class="l">オイル交換が必要</div></div>
   </div>
   <div class="cols">
     <div class="card"><h3>いま空いている車</h3><ul class="list">${freeNow.map((v) => `<li>${catBadge(v.category)}<span class="grow"><b>${esc(v.name)}</b> <span class="muted">${esc(v.plate)}</span></span></li>`).join('') || empty}</ul></div>
@@ -190,6 +215,7 @@ function dashboard() {
     }).join('') || empty}</ul></div>
     <div class="card"><h3>本日の貸出予定</h3><ul class="list">${todayOut.map((l) => row(l, fmt(l.start).split(' ')[1])).join('') || empty}</ul></div>
     <div class="card"><h3>本日の返却予定</h3><ul class="list">${todayIn.map((l) => row(l, fmt(l.end).split(' ')[1])).join('') || empty}</ul></div>
+    <div class="card"><h3>オイル交換の時期（30日以内・500km以内・超過）</h3><ul class="list">${oilList.map(({ v, o }) => `<li class="click oil" data-vedit="${esc(v.id)}">${catBadge(v.category)}<span class="grow"><b>${esc(v.name)}</b> <span class="muted">${esc(v.plate)}</span></span>${oilBadge(v)}<span class="detail ${o.level === 'over' ? 'red' : 'muted'}">${esc(oilText(o))}</span></li>`).join('') || '<li class="empty-note">なし</li>'}</ul></div>
     <div class="card"><h3>車検が近い／切れた車（30日以内）</h3><ul class="list">${soon.map((v) => {
       const d = Math.ceil((new Date(v.inspection + 'T23:59:59') - now) / DAY);
       return `<li>${catBadge(v.category)}<span class="grow"><b>${esc(v.name)}</b> <span class="muted">${esc(v.plate)}</span></span><span class="${d <= 0 ? 'red' : ''}">${v.inspection}${d <= 0 ? '（切れ）' : `（あと${d}日）`}</span></li>`;
@@ -202,7 +228,7 @@ function legend() {
   return `<div class="legend">${['貸出中', '予約', '遅延', '返却済', '返却未定', '社用', '使用不可'].map((s) => `<span class="badge s-${SCLS[s]}">${SCODE[s]} ${s}</span>`).join('')}<span class="badge s-prep">準 準備時間</span></div>`;
 }
 function vehDiv(v) {
-  return `<div class="veh" data-vedit="${esc(v.id)}"><div class="nm">${catBadge(v.category)} ${esc(v.name)}</div><div class="pl">${esc(v.plate)}</div></div>`;
+  return `<div class="veh" data-vedit="${esc(v.id)}"><div class="nm">${catBadge(v.category)} ${esc(v.name)}</div><div class="pl">${esc(v.plate)}</div>${oilBadge(v) ? `<div class="oilrow">${oilBadge(v)}</div>` : ''}</div>`;
 }
 
 // ---------- ボード（分単位の棒・現在時刻ライン） ----------
@@ -583,6 +609,7 @@ function ledger() {
 }
 function bindLedger() {
   main.querySelectorAll('[data-edit]').forEach((r) => r.onclick = () => openLoan(r.dataset.edit));
+  main.querySelectorAll('[data-vedit]').forEach((r) => r.onclick = () => openVeh(r.dataset.vedit));
   const fq = $('#fq'); if (fq) fq.oninput = () => { ui.filter = fq.value; const p = fq.selectionStart; render(); const n = $('#fq'); n.focus(); n.setSelectionRange(p, p); };
   const fveh = $('#fveh'); if (fveh) fveh.onchange = () => { ui.fveh = fveh.value; render(); };
   const fst = $('#fst'); if (fst) fst.onchange = () => { ui.fstatus = fst.value; render(); };
@@ -648,13 +675,14 @@ function master() {
   const rows = db.vehicles.map((v) => `<tr class="click" data-vedit="${esc(v.id)}">
     <td data-label="ID">${esc(v.id)}</td><td data-label="車名"><b>${esc(v.name)}</b></td><td data-label="ナンバー">${esc(v.plate)}</td><td data-label="登録区分">${catBadge(v.category)}</td>
     <td data-label="車検期限">${v.inspection ? `<span class="${new Date(v.inspection + 'T23:59:59') < Date.now() ? 'red' : ''}">${v.inspection}</span>` : ''}</td>
+    <td data-label="オイル">${oilBadge(v) || (oilInfo(v) ? '<span class="muted">OK</span>' : '<span class="muted">未登録</span>')}</td>
     <td data-label="履歴">${loansOf(v.id).filter((l) => l.type === 'loan').length}件</td>
     <td data-label="状態">${v.active === false ? '<span class="muted">停止</span>' : '使用中'}</td><td data-label="メモ" class="muted">${esc(v.note)}</td></tr>`).join('');
   return `
   <div class="toolbar"><h2 style="margin:0">車両マスタ</h2><span class="muted">${db.vehicles.length}台（上限30台）</span><span class="spacer"></span>
     <button class="btn primary" id="vNew">＋ 車両を追加</button></div>
   <div class="card scroll cardwrap" style="padding:6px 10px;margin-bottom:18px"><table class="stack">
-    <thead><tr><th>ID</th><th>車名</th><th>ナンバー</th><th>登録区分</th><th>車検期限</th><th>履歴</th><th>状態</th><th>メモ</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <thead><tr><th>ID</th><th>車名</th><th>ナンバー</th><th>登録区分</th><th>車検期限</th><th>オイル</th><th>履歴</th><th>状態</th><th>メモ</th></tr></thead><tbody>${rows}</tbody></table></div>
   <div class="cols">
     <div class="card"><h3>設定</h3><div class="grid2">
       <label>準備時間（返却後に空ける時間）<input type="number" min="0" step="0.5" id="setPrep" value="${db.settings.prepHours}"></label>
@@ -712,6 +740,8 @@ function syncLoanForm() {
     const c = conflicts({ ...l, id: editingLoan?.id || '__new' });
     if (c.length) msgs.push('時間が重複: ' + c.map((o) => `${o.customer || status(o)} ${fmt(o.start)}〜${o.end && !o.undecided ? fmt(o.end) : '未定'}`).join(' / '));
     const ins = inspectionIssue(l); if (ins) msgs.push(ins);
+    const oi = l.type === 'loan' ? oilInfo(vehicle(l.vehicleId)) : null;
+    if (oi && oi.level !== 'ok') msgs.push(`この車はオイル交換の時期です（${oilText(oi)}）`);
     if (l.end && !l.undecided && parse(l.end) <= parse(l.start)) msgs.push('終了が開始以前になっています');
   }
   w.hidden = !msgs.length; w.className = 'warn' + (msgs[0]?.startsWith('時間が重複') ? ' err' : ''); w.innerHTML = msgs.map(esc).join('<br>');
@@ -755,9 +785,29 @@ function openVeh(id) {
   $('#vehDelete').hidden = !editingVeh;
   f.id.value = v.id; f.name.value = v.name; f.plate.value = v.plate; f.category.value = v.category;
   f.inspection.value = v.inspection; f.active.checked = v.active !== false; f.note.value = v.note;
+  f.oilLastDate.value = v.oilLastDate || ''; f.oilLastKm.value = hasNum(v.oilLastKm) ? v.oilLastKm : '';
+  f.odo.value = hasNum(v.odo) ? v.odo : ''; f.oilMonths.value = v.oilMonths || 6; f.oilKm.value = v.oilKm || 5000;
+  updateOilStatus();
   renderVehHistory();
   vehDlg.showModal();
 }
+function readOil() {
+  const f = vehForm.elements, n = (x) => (x.value === '' ? '' : Number(x.value));
+  return { oilLastDate: f.oilLastDate.value, oilLastKm: n(f.oilLastKm), odo: n(f.odo), oilMonths: n(f.oilMonths) || 6, oilKm: n(f.oilKm) || 5000 };
+}
+function updateOilStatus() {
+  const o = oilInfo(readOil()), el = $('#oilStatus');
+  el.textContent = o ? `次回: ${oilText(o)}` : '前回の交換日を入れると、次回の時期を計算します。';
+  el.className = 'hint' + (o && o.level === 'over' ? ' red' : '');
+}
+vehForm.addEventListener('input', updateOilStatus);
+$('#oilDone').onclick = () => {
+  const f = vehForm.elements;
+  f.oilLastDate.value = ymd(new Date());
+  if (f.odo.value !== '') f.oilLastKm.value = f.odo.value;
+  updateOilStatus();
+  notify('交換日を今日にしました。「保存」で確定します');
+};
 function renderVehHistory() {
   const sec = $('#vehHist');
   sec.hidden = !editingVeh;
@@ -788,7 +838,7 @@ vehForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const f = vehForm.elements;
   const v = { id: f.id.value.trim(), name: f.name.value.trim(), plate: f.plate.value.trim(), category: f.category.value,
-    inspection: f.inspection.value, active: f.active.checked, note: f.note.value.trim() };
+    inspection: f.inspection.value, active: f.active.checked, note: f.note.value.trim(), ...readOil() };
   if (!v.id || !v.name) return;
   if (db.vehicles.some((o) => o !== editingVeh && o.id === v.id)) return notify('同じ車両IDが既にあります');
   if (!editingVeh && db.vehicles.length >= 30) return notify('車両は30台までです');
