@@ -181,6 +181,37 @@ function render() {
   }
   const after = { day: bindBoard, period: bindBoard, ledger: bindLedger, search: bindSearch, master: bindMaster, dashboard: bindLedger }[ui.view];
   if (after) after();
+  if (ui.anim) { // 画面切り替え・日付移動のときだけアニメーション（自動更新では動かさない）
+    main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter');
+    clearTimeout(ui.enterT); ui.enterT = setTimeout(() => main.classList.remove('enter'), 1100); // 自動更新のたびに動かさない
+    countUp();
+    ui.anim = false;
+  }
+  if (ui.flash) flashItem(ui.flash);
+  ui.flash = null;
+}
+const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function countUp() {
+  if (reduceMotion()) return;
+  main.querySelectorAll('.stat .n').forEach((el) => {
+    if (el.childNodes.length !== 1 || !/^\d+$/.test(el.textContent)) return;
+    const to = Number(el.textContent); if (to < 1) return;
+    const t0 = performance.now(), dur = 520;
+    const step = (t) => {
+      const p = Math.min(1, (t - t0) / dur);
+      el.textContent = Math.round(to * (1 - Math.pow(1 - p, 3)));
+      if (p < 1) requestAnimationFrame(step);
+    };
+    el.textContent = '0'; requestAnimationFrame(step);
+  });
+}
+// 保存・移動した貸出を一瞬ハイライト（確認になる）
+function flashItem(id) {
+  const els = [...document.querySelectorAll(`[data-id="${id}"],tr[data-edit="${id}"]`)];
+  if (!els.length) return;
+  try { els[0].scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) { /* 無視 */ }
+  els.forEach((el) => { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); });
+  setTimeout(() => els.forEach((el) => el.classList.remove('flash')), 1300);
 }
 function centerNow(bd) {
   const nl = bd.querySelector('.nowline');
@@ -281,9 +312,9 @@ function barItem(it, lanes, rs, re) {
 function boardHtml(o) {
   const { rs, re } = o, vs = activeVehicles(ui.cat), now = Date.now();
   const nowLine = now >= rs && now < re ? `<i class="nowline" style="left:${pct(now, rs, re)}%"></i>` : '';
-  const rows = vs.map((v) => {
+  const rows = vs.map((v, i) => {
     const { items, preps, lanes } = layoutBars(v, rs, re);
-    return `<div class="row">${vehDiv(v)}<div class="track" data-v="${esc(v.id)}">${o.shades}${preps.map(([a, b]) => `<div class="bar prep s-prep" style="${barPos(a, b, rs, re)}">準備</div>`).join('')}${items.map((it) => barItem(it, lanes, rs, re)).join('')}${nowLine}</div></div>`;
+    return `<div class="row" style="--i:${Math.min(i, 14)}">${vehDiv(v)}<div class="track" data-v="${esc(v.id)}">${o.shades}${preps.map(([a, b]) => `<div class="bar prep s-prep" style="${barPos(a, b, rs, re)}">準備</div>`).join('')}${items.map((it) => barItem(it, lanes, rs, re)).join('')}${nowLine}</div></div>`;
   }).join('');
   return `<div class="board" data-rs="${rs}" data-re="${re}" style="--n:${o.n};--m:${o.m};--rows:${Math.max(vs.length, 1)}">
     <div class="bi" style="min-width:calc(var(--vw) + ${o.minTrack}px)">
@@ -357,7 +388,7 @@ function periodView() {
 
 // ---------- ボードの操作 ----------
 function bindBoard() {
-  const go = () => { ui.center = true; render(); };
+  const go = () => { ui.center = ui.anim = true; render(); };
   const step = (n) => {
     if (ui.view === 'day') ui.day = ymd(new Date(dayStart(ui.day).getTime() + n * DAY + 12 * HOUR));
     else ui.pStart = ymd(new Date(dayStart(ui.pStart).getTime() + n * DAY + 12 * HOUR));
@@ -370,7 +401,7 @@ function bindBoard() {
   const pd = $('#pDays'); if (pd) pd.onchange = () => { ui.pDays = Number(pd.value); render(); };
   main.querySelectorAll('[data-vedit]').forEach((c) => c.onclick = () => openVeh(c.dataset.vedit));
   main.querySelectorAll('[data-cat]').forEach((c) => c.onclick = () => { ui.cat = c.dataset.cat; render(); });
-  main.querySelectorAll('[data-tvview]').forEach((c) => c.onclick = () => { ui.view = c.dataset.tvview; ui.center = true; render(); });
+  main.querySelectorAll('[data-tvview]').forEach((c) => c.onclick = () => { ui.view = c.dataset.tvview; ui.center = ui.anim = true; render(); });
   const ex = $('#tvExit'); if (ex) ex.onclick = exitTv;
   initDrag();
 }
@@ -379,7 +410,7 @@ function bindBoard() {
 function enterTv() {
   ui.tv = true;
   if (!['day', 'period'].includes(ui.view)) ui.view = 'day';
-  ui.day = ymd(new Date()); ui.pStart = ymd(new Date()); ui.center = true;
+  ui.day = ymd(new Date()); ui.pStart = ymd(new Date()); ui.center = ui.anim = true;
   try { const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* 全画面にできなくても続行 */ }
   render();
 }
@@ -555,6 +586,7 @@ async function commitMove(loan, mode, r, orig) {
   if (conflicts(next).length && !(await ask('同じ車で時間が重複します。この位置にしますか？'))) { render(); return; }
   if (next.vehicleId !== prev.vehicleId && purposeIssue(next) && !(await ask(purposeIssue(next) + '。この車に移しますか？'))) { render(); return; }
   Object.assign(loan, { vehicleId: next.vehicleId, start: next.start, end: next.end });
+  ui.flash = loan.id;
   save(); render();
   notify(`${vehicle(loan.vehicleId)?.name || ''} ${fmt(loan.start)}〜${loan.end ? fmt(loan.end) : '未定'} に変更しました`,
     () => { Object.assign(loan, prev); save(); render(); });
@@ -783,8 +815,8 @@ loanForm.addEventListener('submit', async (e) => {
   if (c.length && !(await ask('同じ車で時間が重複しています。それでも保存しますか？'))) return;
   const pi = purposeIssue(l);
   if (pi && !(await ask(pi + '。このまま保存しますか？'))) return;
-  if (editingLoan) Object.assign(editingLoan, l);
-  else db.loans.push({ ...l, id: 'L' + Date.now().toString(36) });
+  if (editingLoan) { Object.assign(editingLoan, l); ui.flash = editingLoan.id; }
+  else { const nid = 'L' + Date.now().toString(36); db.loans.push({ ...l, id: nid }); ui.flash = nid; }
   save(); loanDlg.close(); render();
 });
 
@@ -864,19 +896,19 @@ vehForm.addEventListener('submit', (e) => {
 });
 
 // ---------- 起動 ----------
-$('#nav').onclick = (e) => { const b = e.target.closest('button'); if (b) { ui.view = b.dataset.view; ui.center = true; window.scrollTo(0, 0); render(); } };
+$('#nav').onclick = (e) => { const b = e.target.closest('button'); if (b) { ui.view = b.dataset.view; ui.center = ui.anim = true; window.scrollTo(0, 0); render(); } };
 $('#newLoan').onclick = () => openLoan(null);
 $('#tvBtn').onclick = enterTv;
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ui.tv && !document.querySelector('dialog[open]')) exitTv(); });
 window.addEventListener('hashchange', () => {
   const h = location.hash.slice(1);
   if (h === 'tv') { if (!ui.tv) enterTv(); return; }
-  if (VIEWS.includes(h) && (h !== ui.view || ui.tv)) { ui.tv = false; ui.view = h; render(); }
+  if (VIEWS.includes(h) && (h !== ui.view || ui.tv)) { ui.tv = false; ui.view = h; ui.anim = true; render(); }
 });
 load();
 const h0 = location.hash.slice(1);
 if (h0 === 'tv') { ui.tv = true; ui.view = 'day'; } else if (VIEWS.includes(h0)) ui.view = h0;
-ui.center = true;
+ui.center = ui.anim = true;
 render();
 setInterval(() => {
   if (dragging || document.querySelector('dialog[open]')) return;
