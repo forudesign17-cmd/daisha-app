@@ -309,3 +309,23 @@ ul.list li.click:hover{background:#f7f7fa}
   @keyframes fade{from{opacity:0}to{opacity:1}}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,59,48,.55)}70%,100%{box-shadow:0 0 0 8px rgba(255,59,48,0)}}
 }
+
+/* ---- 長押しの動き（持ち上がる・波紋） ---- */
+.hold-ring,.hold-pop{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;pointer-events:none;z-index:9}
+.hold-ring{border:3px solid rgba(0,113,227,.55);background:rgba(0,113,227,.10)}
+.hold-pop{border:3px solid rgba(0,113,227,.7);background:rgba(0,113,227,.18)}
+body.dragging .bar:not(.drag):not(.ghost):not(.prep){opacity:.55;transition:opacity .15s}
+@media (prefers-reduced-motion:no-preference){
+  .bar.pressing{animation:pressIn .38s ease-out forwards}
+  .bar.drag{animation:lift .24s cubic-bezier(.3,1.7,.5,1) forwards}
+  .hold-ring{animation:ringGrow .38s linear forwards}
+  .hold-pop{animation:ringPop .55s ease-out forwards}
+  @keyframes pressIn{from{transform:scale(1);filter:none}to{transform:scale(.965);filter:brightness(.94)}}
+  @keyframes lift{0%{transform:scale(.965)}100%{transform:scale(1.05)}}
+  @keyframes ringGrow{from{transform:scale(.25);opacity:.2}to{transform:scale(1);opacity:1}}
+  @keyframes ringPop{from{transform:scale(.8);opacity:1}to{transform:scale(2.2);opacity:0}}
+}
+@media (prefers-reduced-motion:reduce){
+  .bar.pressing{filter:brightness(.94)}
+  .bar.drag{transform:scale(1.03)}
+}

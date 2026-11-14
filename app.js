@@ -475,6 +475,21 @@ function placeBar(el, s, e) {
   el.style.width = Math.max(0, pct(ce, rs, re) - pct(cs, rs, re)) + '%';
   el.classList.toggle('cl', s < rs); el.classList.toggle('cr', e > re);
 }
+// 触覚フィードバック: Android は vibrate、iPhone(iOS 17.4+) は switch 型チェックボックスのトリックを試す（効かなくても動作に影響なし）
+let hapticLabel = null;
+function haptic() {
+  try {
+    if (navigator.vibrate) { navigator.vibrate(14); return; }
+    if (!hapticLabel) {
+      hapticLabel = document.createElement('label');
+      hapticLabel.setAttribute('aria-hidden', 'true');
+      hapticLabel.style.cssText = 'position:fixed;left:-100px;top:-100px;opacity:0;pointer-events:none';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.setAttribute('switch', '');
+      hapticLabel.appendChild(cb); document.body.appendChild(hapticLabel);
+    }
+    hapticLabel.click();
+  } catch (e) { /* 無視 */ }
+}
 function initDrag() {
   const bd = $('.board'); if (!bd) return;
   bd.addEventListener('click', (e) => {
@@ -506,6 +521,15 @@ function initDrag() {
     let sx = x0, sy = y0, lx = x0, ly = y0;
     let anchor = snapT(timeAt(track, sx)), grab = timeAt(track, sx);
     let moved = false, ghost = null, result = null, curTrack = track, armed = !touch, edgeTimer = null;
+    // 長押しの途中経過を見せる（iPhone は振動が使えないので、見た目で「押している」「持ち上がった」を伝える）
+    let ring = null;
+    const clearPress = () => { if (bar) bar.classList.remove('pressing'); if (ring) { ring.remove(); ring = null; } };
+    const spawn = (cls) => {
+      const r = track.getBoundingClientRect(), el = document.createElement('i');
+      el.className = cls; el.style.left = (x0 - r.left) + 'px'; el.style.top = (y0 - r.top) + 'px';
+      track.appendChild(el); return el;
+    };
+    if (touch) { if (bar) bar.classList.add('pressing'); else ring = spawn('hold-ring'); }
 
     const apply = (x, y) => {
       const dt = timeAt(track, x) - grab;
@@ -537,12 +561,14 @@ function initDrag() {
         apply(lx, ly);
       }, 30);
     };
-    const dispose = () => { clearInterval(edgeTimer); touchDrag = false; document.body.classList.remove('dragging'); };
+    const dispose = () => { clearInterval(edgeTimer); touchDrag = false; document.body.classList.remove('dragging'); clearPress(); };
     return {
       arm() { // タッチ: 長押し成立
         armed = true; sx = lx; sy = ly; anchor = snapT(timeAt(track, sx)); grab = timeAt(track, sx);
+        clearPress();
+        if (!bar) { const pop = spawn('hold-pop'); setTimeout(() => pop.remove(), 600); }
         begin();
-        if (navigator.vibrate) navigator.vibrate(12);
+        haptic();
       },
       move(x, y) { // 戻り値 false = ドラッグ不成立（スクロール扱い）
         lx = x; ly = y;
