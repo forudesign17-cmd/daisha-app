@@ -1,0 +1,82 @@
+<title>代車管理</title>
+<link rel="stylesheet" href="style.css">
+<header class="topbar">
+  <div class="brand">代車管理</div>
+  <nav class="seg" id="nav">
+    <button data-view="dashboard">ダッシュボード</button>
+    <button data-view="day">日別</button>
+    <button data-view="period">期間</button>
+    <button data-view="ledger">台帳</button>
+    <button data-view="search">空き検索</button>
+    <button data-view="master">車両マスタ</button>
+  </nav>
+  <button class="btn primary" id="newLoan">＋ 新規貸出</button>
+</header>
+
+<main id="main"></main>
+
+<dialog id="loanDlg">
+  <form method="dialog" id="loanForm">
+    <h2 id="loanTitle">貸出</h2>
+    <div class="grid2">
+      <label>区分
+        <select name="type">
+          <option value="loan">貸出</option>
+          <option value="corp">社用</option>
+          <option value="ng">使用不可（修理・点検など）</option>
+        </select>
+      </label>
+      <label>車両 <select name="vehicleId" required></select></label>
+      <label>お客様名 <input name="customer" placeholder="例：山田様"></label>
+      <label>担当 <select name="staff"></select></label>
+      <label>開始 <input type="datetime-local" name="start" required></label>
+      <label>終了（返却予定） <input type="datetime-local" name="end"></label>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" name="undecided"> 返却未定（板金など）</label>
+      <label><input type="checkbox" name="returned"> 返却済</label>
+      <label><input type="checkbox" name="cancelled"> 取消</label>
+    </div>
+    <label>メモ <textarea name="note" rows="2"></textarea></label>
+    <div id="loanWarn" class="warn" hidden></div>
+    <div class="dlg-actions">
+      <button type="button" class="btn danger" id="loanDelete">削除</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" id="loanCancel">閉じる</button>
+      <button type="submit" class="btn primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="vehDlg">
+  <form method="dialog" id="vehForm">
+    <h2 id="vehTitle">車両</h2>
+    <div class="grid2">
+      <label>車両ID <input name="id" required></label>
+      <label>車名 <input name="name" required></label>
+      <label>ナンバー <input name="plate"></label>
+      <label>登録区分
+        <select name="category"><option>代車</option><option>レンタカー</option></select>
+      </label>
+      <label>車検期限 <input type="date" name="inspection"></label>
+      <label class="inline"><input type="checkbox" name="active" checked> 使用中（オフで一覧から除外）</label>
+    </div>
+    <label>メモ（保険・登録費用など） <textarea name="note" rows="3"></textarea></label>
+    <div class="dlg-actions">
+      <button type="button" class="btn danger" id="vehDelete">削除</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" id="vehCancel">閉じる</button>
+      <button type="submit" class="btn primary">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="askDlg">
+  <p id="askMsg" style="margin-top:0"></p>
+  <div class="dlg-actions"><span class="spacer"></span>
+    <button type="button" class="btn" id="askNo">キャンセル</button>
+    <button type="button" class="btn primary" id="askYes">OK</button></div>
+</dialog>
+<div id="toast" hidden></div>
+
+<script src="app.js"></script>
