@@ -109,18 +109,28 @@ function inspectionIssue(l) {
   const lim = new Date(v.inspection + 'T23:59:59').getTime();
   return span(l)[0] > lim || (!l.undecided && l.end && parse(l.end).getTime() > lim) ? `車検期限（${v.inspection}）を過ぎる期間を含みます` : '';
 }
-function activeVehicles() { return db.vehicles.filter((v) => v.active !== false); }
+function activeVehicles(cat = '') { return db.vehicles.filter((v) => v.active !== false && (!cat || v.category === cat)); }
 function loansOf(vid) { return db.loans.filter((l) => l.vehicleId === vid && !l.cancelled); }
 
 // ---------- UI状態 ----------
-const ui = { view: 'dashboard', day: ymd(new Date()), pStart: ymd(new Date()), pDays: 14, filter: '', fstatus: '', search: {} };
+const VIEWS = ['dashboard', 'day', 'period', 'ledger', 'search', 'master'];
+const ui = { view: 'dashboard', day: ymd(new Date()), pStart: ymd(new Date()), pDays: 14, filter: '', fstatus: '', cat: '', search: {} };
 const $ = (s, r = document) => r.querySelector(s);
 const main = $('#main');
+const isPhone = () => window.matchMedia('(max-width:760px)').matches;
+
+function catChips() {
+  return `<div class="chips">${[['', 'すべて'], ['代車', '代車'], ['レンタカー', 'レンタカー']].map(([v, t]) => `<button class="chip ${ui.cat === v ? 'on' : ''}" data-cat="${v}">${t}</button>`).join('')}</div>`;
+}
 
 function render() {
+  if (location.hash.slice(1) !== ui.view) history.replaceState(null, '', '#' + ui.view);
   document.querySelectorAll('#nav button').forEach((b) => b.classList.toggle('on', b.dataset.view === ui.view));
+  const t = new Date(); $('#today').textContent = `${t.getMonth() + 1}月${t.getDate()}日（${WD[t.getDay()]}）`;
   const fn = { dashboard, day: dayView, period: periodView, ledger, search: searchView, master }[ui.view];
+  const sx = window.scrollX, sy = window.scrollY;
   main.innerHTML = fn();
+  window.scrollTo(sx, sy);
   const after = { day: bindBoard, period: bindBoard, ledger: bindLedger, search: bindSearch, master: bindMaster, dashboard: bindLedger }[ui.view];
   if (after) after();
 }
@@ -145,7 +155,7 @@ function dashboard() {
   <div class="cards">
     <div class="card stat"><div class="n">${cnt('貸出中')}</div><div class="l">貸出中</div></div>
     <div class="card stat"><div class="n">${freeNow.length}<span class="muted" style="font-size:16px"> / ${activeVehicles().length}</span></div><div class="l">いま空いている車</div></div>
-    <div class="card stat"><div class="n" style="color:${late.length ? '#c00' : 'inherit'}">${late.length}</div><div class="l">遅延</div></div>
+    <div class="card stat ${late.length ? 'alert' : ''}"><div class="n">${late.length}</div><div class="l">遅延</div></div>
     <div class="card stat"><div class="n">${tbd.length}</div><div class="l">返却未定</div></div>
     <div class="card stat"><div class="n">${cnt('予約')}</div><div class="l">予約</div></div>
   </div>
@@ -190,7 +200,8 @@ function dayView() {
   const { dayStart: h0, dayEnd: h1 } = db.settings;
   const base = dayStart(ui.day).getTime();
   const hours = []; for (let h = h0; h < h1; h++) hours.push(h);
-  const rows = activeVehicles().map((v) => {
+  const nowT = Date.now();
+  const rows = activeVehicles(ui.cat).map((v) => {
     const cells = hours.map((h) => {
       const t0 = base + h * HOUR;
       const info = slotInfo(v, t0, t0 + HOUR);
@@ -201,7 +212,8 @@ function dayView() {
       const c = cells[i]; let j = i + 1;
       while (j < cells.length && c.key && cells[j].key === c.key) j++;
       const n = j - i;
-      if (!c.info) html += `<td class="cell empty" data-new="${esc(v.id)}" data-t="${ui.day}T${pad(c.h)}:00"></td>`;
+      const nowCls = nowT >= base + c.h * HOUR && nowT < base + (c.h + 1) * HOUR ? ' now' : '';
+      if (!c.info) html += `<td class="cell empty${nowCls}" data-new="${esc(v.id)}" data-t="${ui.day}T${pad(c.h)}:00"></td>`;
       else if (c.info.kind === 'prep') html += `<td class="cell s-prep" colspan="${n}" data-edit="${c.info.l.id}" title="準備時間">準</td>`;
       else {
         const st = status(c.info.l);
@@ -222,8 +234,9 @@ function dayView() {
     <button class="btn" data-step="1">›</button>
     <button class="btn" data-today>今日</button>
     <b>${d.getMonth() + 1}月${d.getDate()}日（${WD[d.getDay()]}）</b>
+    <span class="spacer"></span>${catChips()}
   </div>
-  <div class="board"><table>
+  <div class="board"><table style="min-width:calc(var(--vw) + ${hours.length * 46}px)">
     <thead><tr><th class="veh">車両</th>${hours.map((h) => `<th class="${h === nowH ? 'today' : ''}">${h}:00</th>`).join('')}</tr></thead>
     <tbody>${rows}</tbody></table></div>${legend()}`;
 }
@@ -233,7 +246,7 @@ function periodView() {
   const base = dayStart(ui.pStart).getTime();
   const days = Array.from({ length: ui.pDays }, (_, i) => new Date(base + i * DAY));
   const today = ymd(new Date());
-  const rows = activeVehicles().map((v) => {
+  const rows = activeVehicles(ui.cat).map((v) => {
     const tds = days.map((d) => {
       const t = d.getTime();
       return [0, 12].map((hh) => {
@@ -255,10 +268,11 @@ function periodView() {
     <button class="btn" data-step="7">1週 ›</button>
     <button class="btn" data-today>今日</button>
     <select id="pDays">${[7, 14, 21, 28].map((n) => `<option value="${n}" ${n === ui.pDays ? 'selected' : ''}>${n}日間</option>`).join('')}</select>
-    <span class="muted">各日 左=午前 / 右=午後</span>
+    <span class="hint">各日 左=午前 / 右=午後</span>
+    <span class="spacer"></span>${catChips()}
   </div>
-  <div class="board"><table style="min-width:${210 + ui.pDays * 56}px">
-    <thead><tr><th class="veh" rowspan="1">車両</th>${days.map((d) => `<th colspan="2" class="${ymd(d) === today ? 'today' : ''}">${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})</th>`).join('')}</tr></thead>
+  <div class="board"><table style="min-width:calc(var(--vw) + ${ui.pDays * 60}px)">
+    <thead><tr><th class="veh" rowspan="1">車両</th>${days.map((d) => `<th colspan="2" class="${ymd(d) === today ? 'today' : ''}${d.getDay() === 0 || d.getDay() === 6 ? ' wk' : ''}">${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})</th>`).join('')}</tr></thead>
     <tbody>${rows}</tbody></table></div>${legend()}`;
 }
 
@@ -276,6 +290,12 @@ function bindBoard() {
   main.querySelectorAll('[data-new]').forEach((c) => c.onclick = () => openLoan(null, { vehicleId: c.dataset.new, start: c.dataset.t }));
   bindLedger();
   main.querySelectorAll('[data-vedit]').forEach((c) => c.onclick = () => openVeh(c.dataset.vedit));
+  main.querySelectorAll('[data-cat]').forEach((c) => c.onclick = () => { ui.cat = c.dataset.cat; render(); });
+  // 日別ビューは現在時刻の付近が見えるようにスクロール
+  const bd = $('.board');
+  if (bd && ui.view === 'day' && ui.day === ymd(new Date())) {
+    const nowCell = bd.querySelector('.now'); if (nowCell) bd.scrollLeft = Math.max(0, nowCell.offsetLeft - bd.clientWidth / 2);
+  }
 }
 
 // ---------- 台帳 ----------
@@ -289,24 +309,24 @@ function ledger() {
   }).map((l) => {
     const v = vehicle(l.vehicleId), st = status(l), c = conflicts(l), ins = inspectionIssue(l);
     return `<tr class="click ${c.length ? 'conflict' : ''}" data-edit="${l.id}">
-      <td>${badge(st)}</td><td>${esc(v ? `${v.name} ${v.plate}` : l.vehicleId)}</td><td>${v ? catBadge(v.category) : ''}</td>
-      <td>${esc(l.customer)}</td><td>${esc(l.staff)}</td><td>${fmt(l.start)}</td>
-      <td>${l.undecided || !l.end ? '<span class="muted">未定</span>' : fmt(l.end)}</td>
-      <td>${c.length ? '<span class="red">時間が重複</span>' : ''}${ins ? ' <span class="red">車検</span>' : ''}</td>
-      <td class="muted">${esc(l.note)}</td></tr>`;
+      <td data-label="状態">${badge(st)}${c.length ? ' <span class="red">時間が重複</span>' : ''}${ins ? ' <span class="red">車検</span>' : ''}</td>
+      <td data-label="車両"><b>${esc(v ? `${v.name} ${v.plate}` : l.vehicleId)}</b></td><td data-label="登録">${v ? catBadge(v.category) : ''}</td>
+      <td data-label="お客様">${esc(l.customer)}</td><td data-label="担当">${esc(l.staff)}</td><td data-label="開始">${fmt(l.start)}</td>
+      <td data-label="終了">${l.undecided || !l.end ? '<span class="muted">未定</span>' : fmt(l.end)}</td>
+      <td data-label="メモ" class="muted">${esc(l.note)}</td></tr>`;
   }).join('');
   return `
   <div class="toolbar">
     <h2 style="margin:0">貸出台帳</h2>
-    <input id="fq" placeholder="検索（お客様・車名・ナンバー…）" value="${esc(ui.filter)}" style="width:260px">
+    <input id="fq" type="search" placeholder="検索（お客様・車名・ナンバー…）" value="${esc(ui.filter)}" style="min-width:200px;flex:1;max-width:320px">
     <select id="fst"><option value="">すべてのステータス</option>${Object.keys(SCLS).map((s) => `<option ${s === ui.fstatus ? 'selected' : ''}>${s}</option>`).join('')}</select>
     <span class="spacer"></span>
-    <button class="btn" id="btnExport">バックアップ保存</button>
+    <button class="btn" id="btnExport">バックアップ</button>
     <button class="btn" id="btnImport">復元</button><input type="file" id="fileImport" accept=".json" hidden>
   </div>
-  <div class="card" style="padding:6px 10px;overflow:auto"><table>
-    <thead><tr><th>状態</th><th>車両</th><th>登録</th><th>お客様</th><th>担当</th><th>開始</th><th>終了</th><th>チェック</th><th>メモ</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="9" class="muted">該当なし</td></tr>'}</tbody></table></div>`;
+  <div class="card scroll cardwrap" style="padding:6px 10px"><table class="stack">
+    <thead><tr><th>状態</th><th>車両</th><th>登録</th><th>お客様</th><th>担当</th><th>開始</th><th>終了</th><th>メモ</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="8" class="muted">該当なし。右上の「＋ 新規貸出」から登録できます。</td></tr>'}</tbody></table></div>`;
 }
 function bindLedger() {
   main.querySelectorAll('[data-edit]').forEach((r) => r.onclick = () => openLoan(r.dataset.edit));
@@ -343,16 +363,16 @@ function searchView() {
   }) : [];
   return `
   <div class="toolbar"><h2 style="margin:0">空き検索</h2></div>
-  <div class="card" style="margin-bottom:16px"><div class="grid2" style="grid-template-columns:1fr 1fr 1fr">
+  <div class="card" style="margin-bottom:16px"><div class="grid3">
     <label>開始 <input type="datetime-local" id="sFrom" value="${s.from}"></label>
     <label>終了 <input type="datetime-local" id="sTo" value="${s.to}"></label>
     <label>登録区分 <select id="sCat"><option value="">すべて</option><option ${s.cat === '代車' ? 'selected' : ''}>代車</option><option ${s.cat === 'レンタカー' ? 'selected' : ''}>レンタカー</option></select></label>
   </div><p class="muted" style="margin-bottom:0">終了後の準備時間（${db.settings.prepHours}時間）も含めて判定します。</p></div>
-  <div class="card"><table><thead><tr><th>判定</th><th>車両</th><th>登録</th><th>備考</th><th></th></tr></thead><tbody>
+  <div class="card scroll cardwrap"><table class="stack"><thead><tr><th>判定</th><th>車両</th><th>登録</th><th>備考</th><th></th></tr></thead><tbody>
   ${a[1] <= a[0] ? '<tr><td colspan="5" class="red">終了は開始より後にしてください</td></tr>' : res.map(({ v, busy, ng }) => `<tr>
-    <td>${busy.length ? '<span class="badge s-late">埋まり</span>' : ng ? '<span class="badge s-tbd">車検注意</span>' : '<span class="badge s-resv">空き</span>'}</td>
-    <td><b>${esc(v.name)}</b> <span class="muted">${esc(v.plate)}</span></td><td>${catBadge(v.category)}</td>
-    <td class="muted">${busy.length ? busy.map((l) => `${esc(l.customer)} ${fmt(l.start)}〜${l.end && !l.undecided ? fmt(l.end) : '未定'}`).join(' / ') : ng ? `車検期限 ${v.inspection} を過ぎます` : ''}</td>
+    <td data-label="判定">${busy.length ? '<span class="badge s-late">埋まり</span>' : ng ? '<span class="badge s-tbd">車検注意</span>' : '<span class="badge s-resv">空き</span>'}</td>
+    <td data-label="車両"><b>${esc(v.name)}</b> <span class="muted">${esc(v.plate)}</span></td><td data-label="登録">${catBadge(v.category)}</td>
+    <td data-label="備考" class="muted">${busy.length ? busy.map((l) => `${esc(l.customer)} ${fmt(l.start)}〜${l.end && !l.undecided ? fmt(l.end) : '未定'}`).join(' / ') : ng ? `車検期限 ${v.inspection} を過ぎます` : ''}</td>
     <td>${busy.length ? '' : `<button class="btn sm primary" data-book="${esc(v.id)}">この車で予約</button>`}</td></tr>`).join('')}
   </tbody></table></div>`;
 }
@@ -365,13 +385,13 @@ function bindSearch() {
 // ---------- 車両マスタ ----------
 function master() {
   const rows = db.vehicles.map((v) => `<tr class="click" data-vedit="${esc(v.id)}">
-    <td>${esc(v.id)}</td><td><b>${esc(v.name)}</b></td><td>${esc(v.plate)}</td><td>${catBadge(v.category)}</td>
-    <td>${v.inspection ? `<span class="${new Date(v.inspection + 'T23:59:59') < Date.now() ? 'red' : ''}">${v.inspection}</span>` : ''}</td>
-    <td>${v.active === false ? '<span class="muted">停止</span>' : '使用中'}</td><td class="muted">${esc(v.note)}</td></tr>`).join('');
+    <td data-label="ID">${esc(v.id)}</td><td data-label="車名"><b>${esc(v.name)}</b></td><td data-label="ナンバー">${esc(v.plate)}</td><td data-label="登録区分">${catBadge(v.category)}</td>
+    <td data-label="車検期限">${v.inspection ? `<span class="${new Date(v.inspection + 'T23:59:59') < Date.now() ? 'red' : ''}">${v.inspection}</span>` : ''}</td>
+    <td data-label="状態">${v.active === false ? '<span class="muted">停止</span>' : '使用中'}</td><td data-label="メモ" class="muted">${esc(v.note)}</td></tr>`).join('');
   return `
   <div class="toolbar"><h2 style="margin:0">車両マスタ</h2><span class="muted">${db.vehicles.length}台（上限30台）</span><span class="spacer"></span>
     <button class="btn primary" id="vNew">＋ 車両を追加</button></div>
-  <div class="card" style="padding:6px 10px;margin-bottom:18px"><table>
+  <div class="card scroll cardwrap" style="padding:6px 10px;margin-bottom:18px"><table class="stack">
     <thead><tr><th>ID</th><th>車名</th><th>ナンバー</th><th>登録区分</th><th>車検期限</th><th>状態</th><th>メモ</th></tr></thead><tbody>${rows}</tbody></table></div>
   <div class="cols">
     <div class="card"><h3>設定</h3><div class="grid2">
@@ -436,6 +456,16 @@ function syncLoanForm() {
 }
 loanForm.addEventListener('input', syncLoanForm);
 loanForm.addEventListener('change', syncLoanForm);
+$('#presets').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-preset]'); if (!b) return;
+  const f = loanForm.elements;
+  const s = parse(f.start.value) || new Date();
+  const p = b.dataset.preset;
+  let end;
+  if (p === 'eod') { end = new Date(s); end.setHours(18, 0, 0, 0); if (end <= s) end = new Date(s.getTime() + 2 * HOUR); }
+  else end = new Date(s.getTime() + { h2: 2 * HOUR, h4: 4 * HOUR, d1: DAY, d3: 3 * DAY }[p]);
+  f.undecided.checked = false; f.end.value = toInput(end); syncLoanForm();
+});
 $('#loanCancel').onclick = () => loanDlg.close();
 $('#loanDelete').onclick = async () => { if (await ask('この貸出を削除します（取消にする場合は「取消」にチェック）。よろしいですか？')) { db.loans = db.loans.filter((l) => l !== editingLoan); save(); loanDlg.close(); render(); } };
 loanForm.addEventListener('submit', async (e) => {
@@ -486,8 +516,10 @@ vehForm.addEventListener('submit', (e) => {
 });
 
 // ---------- 起動 ----------
-$('#nav').onclick = (e) => { const b = e.target.closest('button'); if (b) { ui.view = b.dataset.view; render(); } };
+$('#nav').onclick = (e) => { const b = e.target.closest('button'); if (b) { ui.view = b.dataset.view; window.scrollTo(0, 0); render(); } };
 $('#newLoan').onclick = () => openLoan(null);
+window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (VIEWS.includes(h) && h !== ui.view) { ui.view = h; render(); } });
 load();
+if (VIEWS.includes(location.hash.slice(1))) ui.view = location.hash.slice(1);
 render();
 setInterval(() => { if (!document.querySelector('dialog[open]') && ui.view !== 'search' && !document.activeElement.matches('input,select,textarea')) render(); }, 60000);

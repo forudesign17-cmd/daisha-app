@@ -1,14 +1,17 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
 <title>代車管理</title>
 <link rel="stylesheet" href="style.css">
 <header class="topbar">
-  <div class="brand">代車管理</div>
+  <div class="brand">代車管理<small id="today"></small></div>
   <nav class="seg" id="nav">
-    <button data-view="dashboard">ダッシュボード</button>
-    <button data-view="day">日別</button>
-    <button data-view="period">期間</button>
-    <button data-view="ledger">台帳</button>
-    <button data-view="search">空き検索</button>
-    <button data-view="master">車両マスタ</button>
+    <button data-view="dashboard"><span class="l">ダッシュボード</span><span class="s">ホーム</span></button>
+    <button data-view="day"><span class="l">日別</span><span class="s">日別</span></button>
+    <button data-view="period"><span class="l">期間</span><span class="s">期間</span></button>
+    <button data-view="ledger"><span class="l">台帳</span><span class="s">台帳</span></button>
+    <button data-view="search"><span class="l">空き検索</span><span class="s">空き</span></button>
+    <button data-view="master"><span class="l">車両マスタ</span><span class="s">車両</span></button>
   </nav>
   <button class="btn primary" id="newLoan">＋ 新規貸出</button>
 </header>
@@ -31,6 +34,13 @@
       <label>担当 <select name="staff"></select></label>
       <label>開始 <input type="datetime-local" name="start" required></label>
       <label>終了（返却予定） <input type="datetime-local" name="end"></label>
+    </div>
+    <div class="presets" id="presets">終了をすばやく設定:
+      <button type="button" class="chip" data-preset="h2">+2時間</button>
+      <button type="button" class="chip" data-preset="h4">+4時間</button>
+      <button type="button" class="chip" data-preset="eod">今日18時</button>
+      <button type="button" class="chip" data-preset="d1">+1日</button>
+      <button type="button" class="chip" data-preset="d3">+3日</button>
     </div>
     <div class="checks">
       <label><input type="checkbox" name="undecided"> 返却未定（板金など）</label>
