@@ -384,74 +384,34 @@ function initDrag() {
     const bar = e.target.closest && e.target.closest('.bar');
     if (bar && bar.dataset.id && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openLoan(bar.dataset.id); }
   });
-  // タッチ中、ドラッグが始まったらスクロールを止める
-  bd.addEventListener('touchmove', (e) => { if (touchDrag && e.cancelable) e.preventDefault(); }, { passive: false });
+  // ---- ドラッグ（マウス: ポインタイベント / タッチ: 長押し後にタッチイベントで制御） ----
   bd.addEventListener('contextmenu', (e) => { if (e.target.closest('.bar')) e.preventDefault(); });
-  bd.addEventListener('pointerdown', (e) => {
-    const touch = e.pointerType === 'touch';
-    if (!touch && e.button !== 0) return;
-    const track = e.target.closest('.track'); if (!track) return;
-    const bar = e.target.closest('.bar');
+
+  function makeSession(target, x0, y0, touch) {
+    const track = target.closest('.track'); if (!track) return null;
+    const bar = target.closest('.bar');
     let mode = 'create', loan = null, orig = null;
     if (bar && bar.dataset.id) {
       loan = db.loans.find((l) => l.id === bar.dataset.id);
-      if (!loan || bar.dataset.lock) return;
-      mode = e.target.classList.contains('hl') ? 'rl' : e.target.classList.contains('hr') ? 'rr' : 'move';
+      if (!loan || bar.dataset.lock) return null;
+      mode = target.classList.contains('hl') ? 'rl' : target.classList.contains('hr') ? 'rr' : 'move';
       const [s, en] = span(loan);
       orig = { s, e: en, hasEnd: !(loan.undecided || !loan.end) };
     }
-    const rs = Number(bd.dataset.rs), re = Number(bd.dataset.re);
-    let sx = e.clientX, sy = e.clientY, lastEv = e;
+    let sx = x0, sy = y0, lx = x0, ly = y0;
     let anchor = snapT(timeAt(track, sx)), grab = timeAt(track, sx);
-    let moved = false, ghost = null, result = null, curTrack = track, armed = !touch, holdTimer = null, edgeTimer = null;
+    let moved = false, ghost = null, result = null, curTrack = track, armed = !touch, edgeTimer = null;
 
-    const begin = () => {
-      moved = true; dragging = true; document.body.classList.add('dragging');
-      if (bar) bar.classList.add('drag');
-      else { ghost = document.createElement('div'); ghost.className = 'bar ghost'; track.appendChild(ghost); }
-      edgeTimer = setInterval(() => { // 端に近づいたらボードを自動スクロール
-        const r = bd.getBoundingClientRect(), vw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--vw')) || 0;
-        const x = lastEv.clientX;
-        if (x < r.left + vw + 28) bd.scrollLeft -= 14; else if (x > r.right - 28) bd.scrollLeft += 14; else return;
-        onMove(lastEv);
-      }, 30);
-    };
-    const finish = () => {
-      clearTimeout(holdTimer); clearInterval(edgeTimer); touchDrag = false;
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
-    };
-    if (touch) {
-      // タッチは長押しでドラッグ開始（それまではスクロール／タップ）
-      holdTimer = setTimeout(() => {
-        armed = true; touchDrag = true;
-        sx = lastEv.clientX; sy = lastEv.clientY; anchor = snapT(timeAt(track, sx)); grab = timeAt(track, sx);
-        try { e.target.releasePointerCapture(e.pointerId); } catch (err) { /* 無視 */ }
-        if (navigator.vibrate) navigator.vibrate(12);
-        begin();
-      }, 380);
-    }
-
-    const onMove = (ev) => {
-      lastEv = ev;
-      if (!armed) { // 長押し待ちの間に指が動いたらスクロールとみなして中止
-        if (Math.abs(ev.clientX - sx) > 8 || Math.abs(ev.clientY - sy) > 8) { finish(); }
-        return;
-      }
-      if (!moved) {
-        if (Math.abs(ev.clientX - sx) < 4 && (mode === 'create' || Math.abs(ev.clientY - sy) < 6)) return;
-        begin();
-      }
-      const dt = timeAt(track, ev.clientX) - grab;
+    const apply = (x, y) => {
+      const dt = timeAt(track, x) - grab;
       if (mode === 'create') {
-        let a = anchor, b = snapT(timeAt(track, ev.clientX));
+        let a = anchor, b = snapT(timeAt(track, x));
         if (a > b) [a, b] = [b, a];
         if (b - a < snapMs()) b = a + snapMs();
         result = { s: a, e: b }; placeBar(ghost, a, b);
       } else if (mode === 'move') {
         const ns = snapT(orig.s + dt), shift = ns - orig.s;
-        const t2 = document.elementsFromPoint(ev.clientX, ev.clientY).find((x) => x.classList && x.classList.contains('track'));
+        const t2 = document.elementsFromPoint(x, y).find((el) => el.classList && el.classList.contains('track'));
         if (t2 && t2 !== curTrack) { curTrack = t2; t2.appendChild(bar); bar.style.top = '7px'; bar.style.height = 'calc(100% - 14px)'; }
         result = { s: ns, e: orig.e + shift, vid: curTrack.dataset.v }; placeBar(bar, result.s, result.e);
       } else if (mode === 'rl') {
@@ -462,25 +422,81 @@ function initDrag() {
         result = { s: orig.s, e: ne }; placeBar(bar, orig.s, ne);
       }
     };
-    const onUp = async () => {
-      finish();
-      document.body.classList.remove('dragging');
-      if (!moved) return;
-      suppressClick = true; setTimeout(() => { suppressClick = false; }, 80);
-      if (ghost) ghost.remove();
-      if (!result) { if (bar) bar.classList.remove('drag'); dragging = false; return; } // 長押しだけで動かさなかった場合
-      if (mode === 'create') {
-        dragging = false;
-        openLoan(null, { vehicleId: track.dataset.v, start: toInput(new Date(result.s)), end: toInput(new Date(result.e)) });
-        return;
-      }
-      await commitMove(loan, mode, result, orig);
-      dragging = false;
+    const begin = () => {
+      moved = true; dragging = true; document.body.classList.add('dragging');
+      if (bar) bar.classList.add('drag');
+      else { ghost = document.createElement('div'); ghost.className = 'bar ghost'; track.appendChild(ghost); }
+      edgeTimer = setInterval(() => { // 端に近づいたらボードを自動スクロール
+        const r = bd.getBoundingClientRect(), vw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--vw')) || 0;
+        if (lx < r.left + vw + 28) bd.scrollLeft -= 14; else if (lx > r.right - 28) bd.scrollLeft += 14; else return;
+        apply(lx, ly);
+      }, 30);
     };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    window.addEventListener('pointercancel', onUp);
+    const dispose = () => { clearInterval(edgeTimer); touchDrag = false; document.body.classList.remove('dragging'); };
+    return {
+      arm() { // タッチ: 長押し成立
+        armed = true; sx = lx; sy = ly; anchor = snapT(timeAt(track, sx)); grab = timeAt(track, sx);
+        begin();
+        if (navigator.vibrate) navigator.vibrate(12);
+      },
+      move(x, y) { // 戻り値 false = ドラッグ不成立（スクロール扱い）
+        lx = x; ly = y;
+        if (!armed) return !(Math.abs(x - sx) > 8 || Math.abs(y - sy) > 8);
+        if (!moved) {
+          if (Math.abs(x - sx) < 4 && (mode === 'create' || Math.abs(y - sy) < 6)) return true;
+          begin();
+        }
+        apply(x, y);
+        return true;
+      },
+      async up() {
+        dispose();
+        if (!moved) return;
+        suppressClick = true; setTimeout(() => { suppressClick = false; }, 300);
+        if (ghost) ghost.remove();
+        if (!result) { if (bar) bar.classList.remove('drag'); dragging = false; return; } // 長押しだけで動かさなかった
+        if (mode === 'create') {
+          dragging = false;
+          openLoan(null, { vehicleId: track.dataset.v, start: toInput(new Date(result.s)), end: toInput(new Date(result.e)) });
+          return;
+        }
+        await commitMove(loan, mode, result, orig);
+        dragging = false;
+      },
+    };
+  }
+
+  // マウス
+  bd.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch' || e.button !== 0) return;
+    const s = makeSession(e.target, e.clientX, e.clientY, false); if (!s) return;
+    const mv = (ev) => s.move(ev.clientX, ev.clientY);
+    const up = () => {
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      s.up();
+    };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   });
+
+  // タッチ（長押し 0.4 秒でドラッグ開始。それまではスクロール／タップ）
+  let ts = null, holdTimer = null;
+  const endTouch = () => { clearTimeout(holdTimer); const s = ts; ts = null; if (s) s.up(); };
+  bd.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) { endTouch(); return; }
+    const t = e.touches[0];
+    ts = makeSession(e.target, t.clientX, t.clientY, true);
+    if (!ts) return;
+    const mine = ts;
+    holdTimer = setTimeout(() => { if (ts === mine) { touchDrag = true; mine.arm(); } }, 380);
+  }, { passive: true });
+  bd.addEventListener('touchmove', (e) => {
+    if (!ts) return;
+    const t = e.touches[0];
+    if (ts.move(t.clientX, t.clientY) === false) { endTouch(); return; } // スクロールとみなして中止
+    if (touchDrag && e.cancelable) e.preventDefault();
+  }, { passive: false });
+  bd.addEventListener('touchend', endTouch);
+  bd.addEventListener('touchcancel', endTouch);
 }
 async function commitMove(loan, mode, r, orig) {
   const prev = { vehicleId: loan.vehicleId, start: loan.start, end: loan.end };
