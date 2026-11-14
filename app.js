@@ -196,6 +196,29 @@ function purposeIssue(l) {
   if (v.category === '代車' && ins) return '代車登録の車を、保険対応で貸し出そうとしています（レンタカー登録が必要な場合があります）';
   return '';
 }
+// ---- 車検: 期限の2か月前から受けられるので、その日から「車検の時期」として知らせる ----
+const INSPECTION_MONTHS_BEFORE = 2;
+function addMonthsClamp(d, n) { // 月末はその月の末日に丸める
+  const r = new Date(d.getFullYear(), d.getMonth() + n, 1, d.getHours(), d.getMinutes(), d.getSeconds());
+  r.setDate(Math.min(d.getDate(), new Date(r.getFullYear(), r.getMonth() + 1, 0).getDate()));
+  return r;
+}
+function inspectionInfo(v) {
+  if (!v || !v.inspection) return null;
+  const exp = new Date(v.inspection + 'T23:59:59');
+  if (Number.isNaN(exp.getTime())) return null;
+  const opens = dayStart(ymd(addMonthsClamp(exp, -INSPECTION_MONTHS_BEFORE)));
+  const now = Date.now();
+  return {
+    exp: v.inspection, opens: ymd(opens), daysLeft: Math.ceil((exp - now) / DAY),
+    level: exp.getTime() < now ? 'over' : now >= opens.getTime() ? 'open' : 'ok',
+  };
+}
+function inspBadge(v) {
+  const i = inspectionInfo(v);
+  if (!i || i.level === 'ok') return '';
+  return `<span class="badge oil-${i.level === 'over' ? 'over' : 'soon'}" title="${esc(`期限 ${i.exp}（${i.opens} から受けられます）`)}">${i.level === 'over' ? '車検切れ' : '車検の時期'}</span>`;
+}
 function activeVehicles(cat = '') { return db.vehicles.filter((v) => v.active !== false && (!cat || v.category === cat)); }
 function loansOf(vid) { return db.loans.filter((l) => l.vehicleId === vid && !l.cancelled); }
 
@@ -283,8 +306,7 @@ function dashboard() {
   const todayOut = live.filter((l) => l.type === 'loan' && l.start.slice(0, 10) === todayS);
   const todayIn = live.filter((l) => l.type === 'loan' && l.end && l.end.slice(0, 10) === todayS);
   const oilList = activeVehicles().map((v) => ({ v, o: oilInfo(v) })).filter((x) => x.o && x.o.level !== 'ok').sort((a, b) => a.o.daysLeft - b.o.daysLeft);
-  const soon = activeVehicles().filter((v) => v.inspection && (new Date(v.inspection + 'T23:59:59') - now) / DAY <= 30)
-    .sort((a, b) => a.inspection.localeCompare(b.inspection));
+  const soon = activeVehicles().map((v) => ({ v, i: inspectionInfo(v) })).filter((x) => x.i && x.i.level !== 'ok').sort((a, b) => a.i.daysLeft - b.i.daysLeft);
   const row = (l, extra = '') => `<li class="click" data-edit="${l.id}">${badge(st(l))}<span class="grow"><b>${esc(vehicle(l.vehicleId)?.name)}</b> <span class="muted">${esc(l.customer)}</span>${l.reason ? ` <span class="why-tag">${esc(l.reason)}</span>` : ''}</span><span class="muted">${extra}</span></li>`;
   const empty = '<li class="muted">なし</li>';
   return `
@@ -295,6 +317,7 @@ function dashboard() {
     <div class="card stat"><div class="n">${tbd.length}</div><div class="l">返却未定</div></div>
     <div class="card stat"><div class="n">${cnt('予約')}</div><div class="l">予約</div></div>
     <div class="card stat ${oilList.length ? 'warn-card' : ''}"><div class="n">${oilList.length}</div><div class="l">オイル交換が必要</div></div>
+    <div class="card stat ${soon.length ? 'warn-card' : ''}"><div class="n">${soon.length}</div><div class="l">車検の時期</div></div>
   </div>
   <div class="cols">
     <div class="card"><h3>いま空いている車</h3><ul class="list">${freeNow.map((v) => `<li>${catBadge(v.category)}<span class="grow"><b>${esc(v.name)}</b> <span class="muted">${esc(v.plate)}</span></span></li>`).join('') || empty}</ul></div>
@@ -306,9 +329,9 @@ function dashboard() {
     <div class="card"><h3>本日の貸出予定</h3><ul class="list">${todayOut.map((l) => row(l, fmt(l.start).split(' ')[1])).join('') || empty}</ul></div>
     <div class="card"><h3>本日の返却予定</h3><ul class="list">${todayIn.map((l) => row(l, fmt(l.end).split(' ')[1])).join('') || empty}</ul></div>
     <div class="card"><h3>オイル交換の時期（30日以内・500km以内・超過）</h3><ul class="list">${oilList.map(({ v, o }) => `<li class="click oil" data-vedit="${esc(v.id)}">${catBadge(v.category)}<span class="grow"><b>${esc(v.name)}</b> <span class="muted">${esc(v.plate)}</span></span>${oilBadge(v)}<span class="detail ${o.level === 'over' ? 'red' : 'muted'}">${esc(oilText(o))}</span></li>`).join('') || '<li class="empty-note">なし</li>'}</ul></div>
-    <div class="card"><h3>車検が近い／切れた車（30日以内）</h3><ul class="list">${soon.map((v) => {
-      const d = Math.ceil((new Date(v.inspection + 'T23:59:59') - now) / DAY);
-      return `<li>${catBadge(v.category)}<span class="grow"><b>${esc(v.name)}</b> <span class="muted">${esc(v.plate)}</span></span><span class="${d <= 0 ? 'red' : ''}">${v.inspection}${d <= 0 ? '（切れ）' : `（あと${d}日）`}</span></li>`;
+    <div class="card"><h3>車検の時期（期限の2か月前から）</h3><ul class="list">${soon.map(({ v, i }) => {
+      const d = i.daysLeft;
+      return `<li class="click oil" data-vedit="${esc(v.id)}">${catBadge(v.category)}<span class="grow"><b>${esc(v.name)}</b> <span class="muted">${esc(v.plate)}</span></span>${inspBadge(v)}<span class="detail ${i.level === 'over' ? 'red' : 'muted'}">期限 ${i.exp}（${d <= 0 ? `${-d}日超過` : `あと${d}日`}）</span></li>`;
     }).join('') || empty}</ul></div>
   </div>`;
 }
@@ -318,7 +341,7 @@ function legend() {
   return `<div class="legend">${['貸出中', '予約', '遅延', '返却済', '返却未定', '社用', '使用不可'].map((s) => `<span class="badge s-${SCLS[s]}">${SCODE[s]} ${s}</span>`).join('')}<span class="badge s-prep">準 準備時間</span></div>`;
 }
 function vehDiv(v) {
-  return `<div class="veh" data-vedit="${esc(v.id)}"><div class="nm">${catBadge(v.category)} ${esc(v.name)}</div><div class="pl">${esc(v.plate)}</div>${oilBadge(v) ? `<div class="oilrow">${oilBadge(v)}</div>` : ''}</div>`;
+  return `<div class="veh" data-vedit="${esc(v.id)}"><div class="nm">${catBadge(v.category)} ${esc(v.name)}</div><div class="pl">${esc(v.plate)}</div>${oilBadge(v) || inspBadge(v) ? `<div class="oilrow">${inspBadge(v)}${oilBadge(v)}</div>` : ''}</div>`;
 }
 
 // ---------- ボード（分単位の棒・現在時刻ライン） ----------
@@ -812,7 +835,7 @@ function bindSearch() {
 function master() {
   const rows = db.vehicles.map((v) => `<tr class="click" data-vedit="${esc(v.id)}">
     <td data-label="ID">${esc(v.id)}</td><td data-label="車名"><b>${esc(v.name)}</b></td><td data-label="ナンバー">${esc(v.plate)}</td><td data-label="登録区分">${catBadge(v.category)}</td>
-    <td data-label="車検期限">${v.inspection ? `<span class="${new Date(v.inspection + 'T23:59:59') < Date.now() ? 'red' : ''}">${v.inspection}</span>` : ''}</td>
+    <td data-label="車検期限">${v.inspection ? `<span class="${new Date(v.inspection + 'T23:59:59') < Date.now() ? 'red' : ''}">${v.inspection}</span> ${inspBadge(v)}` : ''}</td>
     <td data-label="オイル">${oilBadge(v) || (oilInfo(v) ? '<span class="muted">OK</span>' : '<span class="muted">未登録</span>')}</td>
     <td data-label="履歴">${loansOf(v.id).filter((l) => l.type === 'loan').length}件</td>
     <td data-label="状態">${v.active === false ? '<span class="muted">停止</span>' : '使用中'}</td><td data-label="メモ" class="muted">${esc(v.note)}</td></tr>`).join('');
@@ -1020,6 +1043,23 @@ vehForm.addEventListener('submit', (e) => {
   } else db.vehicles.push(v);
   save(); vehDlg.close(); render();
 });
+
+// ---------- ダイアログの外側（暗い部分）を押したら閉じる ----------
+// 押し始めも離したのも外側のときだけ閉じる（中で文字を選択して外で離したときに閉じないため）。
+// iPhone では click が届かないことがあるので pointer イベントを使う。
+function closeOnBackdrop(dlg, onOutside) {
+  let downOutside = false;
+  const outside = (e) => { const r = dlg.getBoundingClientRect(); return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom; };
+  dlg.addEventListener('pointerdown', (e) => { downOutside = e.target === dlg && outside(e); });
+  dlg.addEventListener('pointerup', (e) => {
+    const hit = downOutside && e.target === dlg && outside(e);
+    downOutside = false;
+    if (hit) onOutside();
+  });
+}
+closeOnBackdrop(loanDlg, () => loanDlg.close());
+closeOnBackdrop(vehDlg, () => vehDlg.close());
+closeOnBackdrop(document.getElementById('askDlg'), () => document.getElementById('askNo').click()); // 確認は「キャンセル」と同じ扱い
 
 // ---------- 起動 ----------
 $('#nav').onclick = (e) => { const b = e.target.closest('button'); if (b) { ui.view = b.dataset.view; ui.center = ui.anim = true; window.scrollTo(0, 0); render(); } };
