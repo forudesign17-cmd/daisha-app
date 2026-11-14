@@ -28,9 +28,18 @@ function seed() {
     ],
   };
 }
+// 古い形式・壊れたデータでも動くように、足りない項目を補う
+function normalizeDb(d) {
+  d.settings = { prepHours: 1, dayStart: 8, dayEnd: 20, ...(d.settings || {}) };
+  if (!(Number(d.settings.dayEnd) > Number(d.settings.dayStart))) { d.settings.dayStart = 8; d.settings.dayEnd = 20; }
+  d.staff = Array.isArray(d.staff) ? d.staff : [];
+  d.vehicles = (Array.isArray(d.vehicles) ? d.vehicles : []).filter((v) => v && v.id);
+  d.loans = (Array.isArray(d.loans) ? d.loans : []).filter((l) => l && l.id && l.start && !Number.isNaN(new Date(l.start).getTime()));
+  return d;
+}
 function load() {
   try { db = JSON.parse(localStorage.getItem(KEY)); } catch (e) { db = null; }
-  if (!db || !db.vehicles) { db = seed(); save(); }
+  if (!db || !Array.isArray(db.vehicles)) { db = seed(); save(); } else normalizeDb(db);
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* 保存不可の環境ではメモリのみ */ } }
 
@@ -120,8 +129,10 @@ function inspectionIssue(l) {
 const hasNum = (x) => x !== '' && x != null && !Number.isNaN(Number(x));
 function oilInfo(v) {
   if (!v || !v.oilLastDate) return null;
-  const due = new Date(v.oilLastDate + 'T00:00');
-  due.setMonth(due.getMonth() + (Number(v.oilMonths) || 6));
+  const d0 = new Date(v.oilLastDate + 'T00:00');
+  if (Number.isNaN(d0.getTime())) return null;
+  const due = new Date(d0.getFullYear(), d0.getMonth() + (Number(v.oilMonths) || 6), 1);
+  due.setDate(Math.min(d0.getDate(), new Date(due.getFullYear(), due.getMonth() + 1, 0).getDate())); // 月末はその月の末日に丸める
   const daysLeft = Math.ceil((due - dayStart(ymd(new Date()))) / DAY);
   const kmLeft = hasNum(v.odo) && hasNum(v.oilLastKm) ? Number(v.oilLastKm) + (Number(v.oilKm) || 5000) - Number(v.odo) : null;
   const over = daysLeft < 0 || (kmLeft !== null && kmLeft <= 0);
@@ -314,7 +325,7 @@ function boardHtml(o) {
   const nowLine = now >= rs && now < re ? `<i class="nowline" style="left:${pct(now, rs, re)}%"></i>` : '';
   const rows = vs.map((v, i) => {
     const { items, preps, lanes } = layoutBars(v, rs, re);
-    return `<div class="row" style="--i:${Math.min(i, 14)}">${vehDiv(v)}<div class="track" data-v="${esc(v.id)}">${o.shades}${preps.map(([a, b]) => `<div class="bar prep s-prep" style="${barPos(a, b, rs, re)}">準備</div>`).join('')}${items.map((it) => barItem(it, lanes, rs, re)).join('')}${nowLine}</div></div>`;
+    return `<div class="row" style="--i:${Math.min(i, 14)}">${vehDiv(v)}<div class="track" data-v="${esc(v.id)}">${o.shades}${preps.map(([a, b]) => `<div class="bar prep s-prep" style="${barPos(a, b, rs, re)}"><span class="t">準備</span></div>`).join('')}${items.map((it) => barItem(it, lanes, rs, re)).join('')}${nowLine}</div></div>`;
   }).join('');
   return `<div class="board" data-rs="${rs}" data-re="${re}" style="--n:${o.n};--m:${o.m};--rows:${Math.max(vs.length, 1)}">
     <div class="bi" style="min-width:calc(var(--vw) + ${o.minTrack}px)">
@@ -675,9 +686,9 @@ function importJson(f) {
   if (!f) return;
   f.text().then(async (t) => {
     const d = JSON.parse(t);
-    if (!d.vehicles || !d.loans) throw new Error('形式が違います');
+    if (!Array.isArray(d.vehicles) || !Array.isArray(d.loans)) throw new Error('形式が違います');
     if (!(await ask('現在のデータを上書きして復元します。よろしいですか？'))) return;
-    db = d; save(); render();
+    db = normalizeDb(d); save(); render();
   }).catch((e) => notify('復元に失敗しました: ' + e.message));
 }
 
@@ -815,7 +826,7 @@ loanForm.addEventListener('submit', async (e) => {
   if (c.length && !(await ask('同じ車で時間が重複しています。それでも保存しますか？'))) return;
   const pi = purposeIssue(l);
   if (pi && !(await ask(pi + '。このまま保存しますか？'))) return;
-  if (editingLoan) { Object.assign(editingLoan, l); ui.flash = editingLoan.id; }
+  if (editingLoan) { Object.assign(editingLoan, l); if (!l.returned) delete editingLoan.returnedAt; ui.flash = editingLoan.id; }
   else { const nid = 'L' + Date.now().toString(36); db.loans.push({ ...l, id: nid }); ui.flash = nid; }
   save(); loanDlg.close(); render();
 });

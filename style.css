@@ -215,8 +215,10 @@ dialog::backdrop{background:rgba(0,0,0,.35);backdrop-filter:blur(3px)}
 
 /* ---- タブレット ---- */
 @media (max-width:1000px){
-  .seg button{padding:6px 10px}
+  .seg button{padding:6px 11px}
   .brand small{display:none}
+  .seg .l{display:none}.seg .s{display:inline}
+  .tvbtn{display:none}
 }
 
 /* ---- スマホ ---- */
