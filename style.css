@@ -134,7 +134,9 @@ tr.click:hover td{background:#f7f7fa}
 .bar:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 body.dragging{user-select:none;cursor:grabbing}
 .hint.touch-hint{display:none}
-.bar,.track{-webkit-touch-callout:none;-webkit-user-select:none}
+.board,.board *{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.bar{cursor:pointer}
+@media (hover:hover) and (pointer:fine){.bar{cursor:grab}.bar.lock{cursor:pointer}}
 .bar .h{width:12px}
 .toast-btn{margin-left:10px;border:0;background:transparent;color:#7db8ff;font-weight:700;cursor:pointer;padding:0}
 

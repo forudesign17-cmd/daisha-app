@@ -449,6 +449,12 @@ function initDrag() {
         apply(x, y);
         return true;
       },
+      isTap() { return touch && !armed && !moved; },
+      tap() { // iPhone Safari は委譲された click が届かないことがあるため、タップは自前で処理
+        dispose();
+        if (bar && loan) openLoan(loan.id);
+        else openLoan(null, { vehicleId: track.dataset.v, start: toInput(new Date(snapT(timeAt(track, lx)))) });
+      },
       async up() {
         dispose();
         if (!moved) return;
@@ -480,9 +486,17 @@ function initDrag() {
 
   // タッチ（長押し 0.4 秒でドラッグ開始。それまではスクロール／タップ）
   let ts = null, holdTimer = null;
-  const endTouch = () => { clearTimeout(holdTimer); const s = ts; ts = null; if (s) s.up(); };
+  const endTouch = (cancelled) => {
+    clearTimeout(holdTimer);
+    const s = ts; ts = null;
+    if (!s) return;
+    if (cancelled !== true && s.isTap()) {
+      suppressClick = true; setTimeout(() => { suppressClick = false; }, 400); // 直後の click と二重に開かない
+      s.tap();
+    } else s.up();
+  };
   bd.addEventListener('touchstart', (e) => {
-    if (e.touches.length !== 1) { endTouch(); return; }
+    if (e.touches.length !== 1) { endTouch(true); return; }
     const t = e.touches[0];
     ts = makeSession(e.target, t.clientX, t.clientY, true);
     if (!ts) return;
@@ -492,11 +506,11 @@ function initDrag() {
   bd.addEventListener('touchmove', (e) => {
     if (!ts) return;
     const t = e.touches[0];
-    if (ts.move(t.clientX, t.clientY) === false) { endTouch(); return; } // スクロールとみなして中止
+    if (ts.move(t.clientX, t.clientY) === false) { endTouch(true); return; } // スクロールとみなして中止
     if (touchDrag && e.cancelable) e.preventDefault();
   }, { passive: false });
-  bd.addEventListener('touchend', endTouch);
-  bd.addEventListener('touchcancel', endTouch);
+  bd.addEventListener('touchend', () => endTouch(false));
+  bd.addEventListener('touchcancel', () => endTouch(true));
 }
 async function commitMove(loan, mode, r, orig) {
   const prev = { vehicleId: loan.vehicleId, start: loan.start, end: loan.end };
